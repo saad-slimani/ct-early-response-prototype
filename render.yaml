@@ -1,0 +1,22 @@
+databases:
+  - name: ct-early-response-db
+    databaseName: ct_early_response
+    user: ct_early_response
+    plan: free
+
+services:
+  - type: web
+    name: ct-early-response
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ct-early-response-db
+          property: connectionString
+      - key: APP_STORAGE_ROOT
+        value: /tmp/ct-early-response

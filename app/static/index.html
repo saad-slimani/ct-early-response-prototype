@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI-Native Imaging Workspace</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero card">
+        <div>
+          <p class="eyebrow">AI-Native PACS/RIS MVP</p>
+          <h1>Imaging Worklist Workspace</h1>
+          <p class="hero-copy">
+            Upload CT studies, work a reading queue, run AI tasks, and draft reports in one surface.
+          </p>
+        </div>
+        <div id="integration-strip" class="integration-strip"></div>
+      </section>
+
+      <section class="workspace-grid">
+        <aside class="sidebar">
+          <section class="card">
+            <div class="section-head">
+              <h2>Worklist</h2>
+              <button id="refresh-worklist" type="button">Refresh</button>
+            </div>
+            <div id="worklist-empty" class="empty-state">No studies yet.</div>
+            <table class="worklist-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Accession</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                </tr>
+              </thead>
+              <tbody id="worklist-body"></tbody>
+            </table>
+          </section>
+
+          <section class="card">
+            <h2>Model Catalog</h2>
+            <div id="model-catalog" class="stack-list"></div>
+          </section>
+
+          <section class="card">
+            <h2>Fine-Tune Queue</h2>
+            <form id="training-form" class="stack-form">
+              <label>Base model <input name="base_model_id" value="tenant-finetune-slot" /></label>
+              <label>Dataset name <input name="dataset_name" value="site-ct-seg-dataset" /></label>
+              <label>Dataset source <input name="dataset_source" value="accepted-segmentations" /></label>
+              <label>Execution target <input name="execution_target" value="local-gpu" /></label>
+              <label>Notes <textarea name="notes" rows="3" placeholder="Which labels or accepted edits should seed this run?"></textarea></label>
+              <button type="submit">Queue Training Run</button>
+            </form>
+            <div id="training-runs" class="stack-list"></div>
+          </section>
+        </aside>
+
+        <section class="content">
+          <div class="two-up">
+            <section class="card">
+              <h2>Study Intake</h2>
+              <form id="upload-form" class="stack-form">
+                <div class="field-grid">
+                  <label>Patient ID <input name="patient_id" value="P001" /></label>
+                  <label>Patient name <input name="patient_name" value="Casey Morgan" /></label>
+                  <label>Accession <input name="accession_number" placeholder="Optional" /></label>
+                  <label>Body part <input name="body_part" value="Chest" /></label>
+                  <label>
+                    Priority
+                    <select name="priority">
+                      <option value="routine">Routine</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="stat">Stat</option>
+                    </select>
+                  </label>
+                  <label>Assignee <input name="assignee" placeholder="Radiologist name" /></label>
+                </div>
+                <label>Indication <textarea name="indication" rows="3" placeholder="Clinical question, prior treatment, symptom context..."></textarea></label>
+                <div class="field-grid">
+                  <label>Baseline scan <input name="baseline_scan" type="file" required /></label>
+                  <label>Follow-up scan <input name="followup_scan" type="file" required /></label>
+                </div>
+                <button type="submit">Create Study Workspace</button>
+              </form>
+              <div id="study-status" class="status-box">Waiting for upload.</div>
+            </section>
+
+            <section class="card">
+              <h2>Workspace Context</h2>
+              <div id="study-summary" class="summary-panel">Select or create a study to start reading.</div>
+              <div class="field-grid compact">
+                <label>
+                  Worklist status
+                  <select id="worklist-status">
+                    <option value="new">New</option>
+                    <option value="ready_to_read">Ready to read</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="awaiting_ai_review">Awaiting AI review</option>
+                    <option value="signed">Signed</option>
+                  </select>
+                </label>
+                <label>
+                  Priority
+                  <select id="worklist-priority">
+                    <option value="routine">Routine</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="stat">Stat</option>
+                  </select>
+                </label>
+                <label>Assignee <input id="worklist-assignee" placeholder="Reader" /></label>
+              </div>
+              <button id="save-worklist" type="button" disabled>Save Workflow State</button>
+              <div id="launch-links" class="stack-list muted-list"></div>
+            </section>
+          </div>
+
+          <div class="two-up">
+            <section class="card">
+              <div class="section-head">
+                <h2>Report Draft</h2>
+                <div class="inline-actions">
+                  <select id="report-status">
+                    <option value="draft">Draft</option>
+                    <option value="final">Final</option>
+                  </select>
+                  <input id="report-signed-by" placeholder="Signing radiologist" />
+                  <button id="save-report" type="button" disabled>Save Report</button>
+                </div>
+              </div>
+              <label>Indication <textarea id="report-indication" rows="3"></textarea></label>
+              <label>Findings <textarea id="report-findings" rows="8"></textarea></label>
+              <label>Impression <textarea id="report-impression" rows="5"></textarea></label>
+              <div id="report-status-note" class="status-box">No report loaded.</div>
+            </section>
+
+            <section class="card">
+              <h2>AI Actions</h2>
+              <div class="field-grid compact">
+                <label>
+                  Task
+                  <select id="task-type">
+                    <option value="segmentation">Segmentation</option>
+                    <option value="early_response">Early response score</option>
+                    <option value="report_draft">Draft report</option>
+                  </select>
+                </label>
+                <label>
+                  Model
+                  <select id="model-select"></select>
+                </label>
+              </div>
+              <label>Prompt <textarea id="task-prompt" rows="3" placeholder="What do you want the model to focus on?"></textarea></label>
+              <label class="checkbox-row">
+                <input id="insert-into-report" type="checkbox" />
+                Insert result into draft report
+              </label>
+              <div class="inline-actions">
+                <button id="run-task" type="button" disabled>Run AI Task</button>
+                <button id="quick-segmentation" type="button" disabled>Quick Segmentation</button>
+                <button id="quick-score" type="button" disabled>Quick Score</button>
+              </div>
+              <div id="task-status" class="status-box">No AI task has run yet.</div>
+              <div id="ai-tasks" class="stack-list"></div>
+            </section>
+          </div>
+
+          <section class="card">
+            <div class="section-head">
+              <h2>Embedded Slice Viewer</h2>
+              <div class="inline-actions">
+                <label>Brush radius <input id="brush-size" type="range" min="2" max="40" value="12" /></label>
+                <button id="save-baseline-slice" type="button" disabled>Save Baseline Mask</button>
+                <button id="save-followup-slice" type="button" disabled>Save Follow-up Mask</button>
+              </div>
+            </div>
+            <div class="viewer-grid">
+              <div class="viewer-card">
+                <h3>Baseline</h3>
+                <input id="baseline-slice" type="range" min="0" max="0" value="0" disabled />
+                <canvas id="baseline-view" width="512" height="512"></canvas>
+              </div>
+              <div class="viewer-card">
+                <h3>Follow-up</h3>
+                <input id="followup-slice" type="range" min="0" max="0" value="0" disabled />
+                <canvas id="followup-view" width="512" height="512"></canvas>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
