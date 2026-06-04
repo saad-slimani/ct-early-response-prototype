@@ -60,9 +60,6 @@ class RadiomicsModel:
     def train(self, examples: Iterable[RadiomicsExample]) -> Dict[str, float]:
         import joblib
         import numpy as np
-        from sklearn.ensemble import RandomForestRegressor
-        from sklearn.pipeline import Pipeline
-        from sklearn.preprocessing import StandardScaler
 
         rows = list(examples)
         if len(rows) < 5:
@@ -71,27 +68,26 @@ class RadiomicsModel:
         X = np.array([[r.features[k] for k in keys] for r in rows], dtype=np.float32)
         y = np.array([r.target for r in rows], dtype=np.float32)
 
-        model = Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                (
-                    "rf",
-                    RandomForestRegressor(
-                        n_estimators=300,
-                        random_state=7,
-                        min_samples_leaf=2,
-                    ),
-                ),
-            ]
-        )
-        model.fit(X, y)
-        pred = model.predict(X)
+        mean = X.mean(axis=0, keepdims=True)
+        std = X.std(axis=0, keepdims=True)
+        std = np.where(std < 1e-6, 1.0, std)
+        X_scaled = (X - mean) / std
+        ones = np.ones((X_scaled.shape[0], 1), dtype=np.float32)
+        design = np.concatenate([ones, X_scaled], axis=1)
+        coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
+        pred = design @ coeffs
         mae = float(np.mean(np.abs(pred - y)))
         r2_num = float(np.sum((pred - y.mean()) ** 2))
         r2_den = float(np.sum((y - y.mean()) ** 2) + 1e-8)
         r2 = max(0.0, min(1.0, r2_num / r2_den))
 
-        payload = {"model": model, "feature_keys": keys}
+        payload = {
+            "kind": "linear-regression",
+            "feature_keys": keys,
+            "mean": mean.astype(np.float32).tolist()[0],
+            "std": std.astype(np.float32).tolist()[0],
+            "coefficients": coeffs.astype(np.float32).tolist(),
+        }
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(payload, self.model_path)
         return {"train_mae": mae, "train_r2_proxy": r2, "n_samples": float(len(rows))}
@@ -102,10 +98,14 @@ class RadiomicsModel:
 
         if self.model_path.exists():
             payload = joblib.load(self.model_path)
-            model = payload["model"]
             keys = payload["feature_keys"]
             x = np.array([[features.get(k, 0.0) for k in keys]], dtype=np.float32)
-            y = float(model.predict(x)[0])
+            mean = np.array([payload["mean"]], dtype=np.float32)
+            std = np.array([payload["std"]], dtype=np.float32)
+            coeffs = np.array(payload["coefficients"], dtype=np.float32)
+            x_scaled = (x - mean) / std
+            design = np.concatenate([np.ones((1, 1), dtype=np.float32), x_scaled], axis=1)
+            y = float((design @ coeffs.reshape(-1, 1))[0, 0])
             return float(np.clip(y, 0.0, 100.0))
 
         # Heuristic fallback if no trained model exists yet.

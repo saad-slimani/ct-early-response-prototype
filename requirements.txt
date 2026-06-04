@@ -4,7 +4,6 @@ python-multipart==0.0.20
 numpy==2.2.6
 SimpleITK==2.5.2
 Pillow==11.3.0
-scikit-learn==1.7.1
 joblib==1.5.1
 SQLAlchemy>=2.0,<3.0
 psycopg[binary]>=3.1,<4.0

@@ -20,8 +20,8 @@ This project provides a working prototype for early treatment response estimatio
 - Imaging I/O: SimpleITK
 - Segmentation adapters:
   - `TotalSegmentator` CLI adapter (if installed)
-  - region-growing fallback (seeded ConnectedThreshold)
-- Radiomics/modeling: handcrafted radiomics + scikit-learn RandomForest
+  - region-growing fallback (bounded seeded grower)
+- Radiomics/modeling: handcrafted radiomics + lightweight linear regression
 - Frontend: HTML/CSS/vanilla JS canvas viewer/editor
 
 ## Run
