@@ -251,6 +251,18 @@
           <div class="section-head">
             <h2>PACS Viewer</h2>
             <div class="inline-actions">
+              <label>Layout
+                <select id="viewer-layout">
+                  <option value="single">Single series</option>
+                  <option value="compare">Compare</option>
+                </select>
+              </label>
+              <label>Active series
+                <select id="active-series">
+                  <option value="baseline">Primary</option>
+                  <option value="followup">Comparison</option>
+                </select>
+              </label>
               <label>Plane
                 <select id="viewer-plane">
                   <option value="axial">Axial</option>
@@ -283,14 +295,18 @@
             <label>Window width <input id="window-width" type="number" min="1" value="500" /></label>
             <label>Zoom <input id="viewer-zoom" type="range" min="1" max="4" step="0.1" value="1" /></label>
             <label>Brush <input id="brush-size" type="range" min="2" max="40" value="12" /></label>
+            <label>Cine fps <input id="cine-fps" type="number" min="1" max="30" value="8" /></label>
             <label class="checkbox-row"><input id="viewer-invert" type="checkbox" /> Invert</label>
             <button id="apply-window" type="button" disabled>Apply window</button>
+            <button id="play-cine" type="button" disabled>Play cine</button>
+            <button id="stop-cine" type="button" disabled>Stop</button>
+            <button id="reset-viewer" type="button" disabled>Reset</button>
             <button id="save-baseline-slice" type="button" disabled>Save primary mask</button>
             <button id="save-followup-slice" type="button" disabled>Save comparison mask</button>
           </div>
-          <div id="measurement-status" class="status-box">Measurements appear here after you use the Measure tool.</div>
+          <div id="measurement-status" class="status-box">Review tool: drag on the image for mouse window/level. Measure and segmentation tools are available from the toolbar.</div>
           <div class="viewer-grid">
-            <div class="viewer-card">
+            <div id="baseline-viewer-card" class="viewer-card active-series-card">
               <div class="section-head">
                 <h3>Primary</h3>
                 <span id="baseline-slice-label" class="tag">slice 0</span>
@@ -298,7 +314,7 @@
               <input id="baseline-slice" type="range" min="0" max="0" value="0" disabled />
               <canvas id="baseline-view" width="512" height="512"></canvas>
             </div>
-            <div class="viewer-card">
+            <div id="followup-viewer-card" class="viewer-card">
               <div class="section-head">
                 <h3>Comparison</h3>
                 <span id="followup-slice-label" class="tag">slice 0</span>

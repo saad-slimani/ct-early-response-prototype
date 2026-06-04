@@ -9,7 +9,7 @@ See [docs/render-deploy.md](docs/render-deploy.md) for the prepared Render deplo
 This project provides a working prototype for an AI-native PACS/RIS workstation with an early treatment response CT workflow:
 
 - Bulk upload DICOM folders with metadata extraction, or upload DICOM zip/NIfTI studies across CT, MRI, ultrasound, mammography, and X-ray-style modalities
-- Review studies in an embedded PACS viewer with modality presets, window/level, inversion, zoom, axial/coronal/sagittal MPR, measurements, and segmentation mask editing
+- Review studies in an embedded PACS viewer with single-series or comparison layouts, active-series selection, modality presets, mouse window/level, inversion, zoom, cine stack playback, axial/coronal/sagittal MPR, measurements, and segmentation mask editing
 - Manage a RIS worklist with scheduling and billing charge capture
 - Draft reports in a browser word processor and insert AI outputs or saved measurements
 - Dictate reports through hosted browser speech recognition or a local/open-source speech-to-text adapter such as Whisper.cpp

@@ -27,6 +27,9 @@ const state = {
     invert: false,
     zoom: 1,
     tool: "pan",
+    layout: "single",
+    activeSeries: "baseline",
+    cineTimer: null,
   },
   views: {
     baseline: { slice: 0, max: 1, imageB64: null, shape: [512, 512], spacing: [1, 1], baseImg: null },
@@ -34,6 +37,7 @@ const state = {
   },
   painting: { active: false, timepoint: null },
   measuring: { active: false, timepoint: null, start: null, preview: null },
+  windowing: { active: false, timepoint: null, start: null, center: 50, width: 500 },
   dictation: { recorder: null, chunks: [], stream: null, recognition: null, mode: null, transcript: "" },
   activeEditor: null,
 };
@@ -90,6 +94,8 @@ const el = {
   modelCatalog: document.getElementById("model-catalog"),
   trainingForm: document.getElementById("training-form"),
   trainingRuns: document.getElementById("training-runs"),
+  viewerLayout: document.getElementById("viewer-layout"),
+  activeSeries: document.getElementById("active-series"),
   viewerPlane: document.getElementById("viewer-plane"),
   viewerPreset: document.getElementById("viewer-preset"),
   viewerTool: document.getElementById("viewer-tool"),
@@ -97,9 +103,15 @@ const el = {
   windowWidth: document.getElementById("window-width"),
   viewerInvert: document.getElementById("viewer-invert"),
   viewerZoom: document.getElementById("viewer-zoom"),
+  cineFps: document.getElementById("cine-fps"),
   applyWindow: document.getElementById("apply-window"),
+  playCine: document.getElementById("play-cine"),
+  stopCine: document.getElementById("stop-cine"),
+  resetViewer: document.getElementById("reset-viewer"),
   measurementStatus: document.getElementById("measurement-status"),
   measurementList: document.getElementById("measurement-list"),
+  baselineViewerCard: document.getElementById("baseline-viewer-card"),
+  followupViewerCard: document.getElementById("followup-viewer-card"),
   baselineSlice: document.getElementById("baseline-slice"),
   followupSlice: document.getElementById("followup-slice"),
   baselineSliceLabel: document.getElementById("baseline-slice-label"),
@@ -197,6 +209,41 @@ function switchPanel(panelName) {
 
 function speechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function comparisonAvailable() {
+  return Boolean(state.workspace) && state.workspace.study?.file_meta?.comparison_uploaded !== false;
+}
+
+function visibleTimepoints() {
+  if (state.viewer.layout === "compare" && comparisonAvailable()) {
+    return ["baseline", "followup"];
+  }
+  return [state.viewer.activeSeries];
+}
+
+function applyViewerLayout() {
+  const canCompare = comparisonAvailable();
+  const comparisonOption = Array.from(el.activeSeries.options).find((option) => option.value === "followup");
+  comparisonOption.disabled = !canCompare;
+  el.viewerLayout.querySelector('option[value="compare"]').disabled = !canCompare;
+
+  if (!canCompare) {
+    state.viewer.layout = "single";
+    state.viewer.activeSeries = "baseline";
+  }
+  el.viewerLayout.value = state.viewer.layout;
+  el.activeSeries.value = state.viewer.activeSeries;
+
+  const showBaseline = state.viewer.layout === "compare" || state.viewer.activeSeries === "baseline";
+  const showFollowup = canCompare && (state.viewer.layout === "compare" || state.viewer.activeSeries === "followup");
+  el.baselineViewerCard.hidden = !showBaseline;
+  el.followupViewerCard.hidden = !showFollowup;
+  el.baselineViewerCard.classList.toggle("active-series-card", state.viewer.activeSeries === "baseline");
+  el.followupViewerCard.classList.toggle("active-series-card", state.viewer.activeSeries === "followup");
+  document.getElementById("viewer-card").classList.toggle("single-viewer", state.viewer.layout === "single");
+  el.saveBaseline.disabled = !state.currentStudyId || (state.viewer.layout === "single" && state.viewer.activeSeries !== "baseline");
+  el.saveFollowup.disabled = !state.currentStudyId || !canCompare || (state.viewer.layout === "single" && state.viewer.activeSeries !== "followup");
 }
 
 function renderIntegrations() {
@@ -420,6 +467,7 @@ function renderWorkspace() {
   renderWorklist();
   setUrlStudyId(study.study_id);
   toggleWorkspaceButtons(true);
+  applyViewerLayout();
 }
 
 function renderMetadataPanel(meta) {
@@ -503,11 +551,23 @@ function renderMeasurements() {
 }
 
 function toggleWorkspaceButtons(enabled) {
-  [el.saveWorklist, el.saveReport, el.runTask, el.quickSegmentation, el.quickScore, el.saveBaseline, el.saveFollowup, el.applyWindow].forEach(
+  [
+    el.saveWorklist,
+    el.saveReport,
+    el.runTask,
+    el.quickSegmentation,
+    el.quickScore,
+    el.saveBaseline,
+    el.saveFollowup,
+    el.applyWindow,
+    el.playCine,
+    el.resetViewer,
+  ].forEach(
     (node) => {
       node.disabled = !enabled;
     }
   );
+  applyViewerLayout();
 }
 
 async function loadImageB64(b64) {
@@ -636,7 +696,7 @@ async function refreshSlice(timepoint) {
 
 async function refreshViewer() {
   if (!state.currentStudyId) return;
-  await Promise.all([refreshSlice("baseline"), refreshSlice("followup")]);
+  await Promise.all(visibleTimepoints().map((timepoint) => refreshSlice(timepoint)));
 }
 
 function drawBrushStroke(timepoint, x, y, radius) {
@@ -693,6 +753,20 @@ function initViewerCanvas(timepoint, canvas) {
   canvas.addEventListener("pointerdown", async (event) => {
     if (!state.currentStudyId) return;
     const canvasPoint = mapCanvasPoint(event, canvas);
+    state.viewer.activeSeries = timepoint;
+    el.activeSeries.value = timepoint;
+    applyViewerLayout();
+    if (state.viewer.tool === "pan") {
+      state.windowing = {
+        active: true,
+        timepoint,
+        start: { clientX: event.clientX, clientY: event.clientY },
+        center: Number(el.windowCenter.value || 0),
+        width: Number(el.windowWidth.value || 500),
+      };
+      canvas.setPointerCapture?.(event.pointerId);
+      return;
+    }
     if (state.viewer.tool === "segment") {
       if (state.viewer.plane !== "axial") {
         setStatus(el.measurementStatus, "Segmentation brush writes axial masks only. Switch to axial to edit masks.");
@@ -713,6 +787,16 @@ function initViewerCanvas(timepoint, canvas) {
   canvas.addEventListener("pointermove", async (event) => {
     if (!state.currentStudyId) return;
     const canvasPoint = mapCanvasPoint(event, canvas);
+    if (state.windowing.active && state.windowing.timepoint === timepoint) {
+      const dx = event.clientX - state.windowing.start.clientX;
+      const dy = event.clientY - state.windowing.start.clientY;
+      const nextCenter = Math.round(state.windowing.center + dx * 2);
+      const nextWidth = Math.max(1, Math.round(state.windowing.width + dy * 4));
+      el.windowCenter.value = String(nextCenter);
+      el.windowWidth.value = String(nextWidth);
+      setStatus(el.measurementStatus, `Window/level preview: C ${nextCenter}, W ${nextWidth}. Release to apply.`);
+      return;
+    }
     if (state.painting.active && state.painting.timepoint === timepoint) {
       drawBrushStroke(timepoint, canvasPoint.x, canvasPoint.y, Number(el.brush.value));
       redrawComposite(timepoint);
@@ -746,6 +830,17 @@ window.addEventListener("pointerup", async () => {
       setStatus(el.measurementStatus, error.message);
     }
   }
+  if (state.windowing.active) {
+    state.windowing.active = false;
+    state.viewer.windowCenter = el.windowCenter.value;
+    state.viewer.windowWidth = el.windowWidth.value;
+    try {
+      await refreshViewer();
+      setStatus(el.measurementStatus, `Applied window/level: C ${state.viewer.windowCenter}, W ${state.viewer.windowWidth}.`);
+    } catch (error) {
+      setStatus(el.measurementStatus, error.message);
+    }
+  }
 });
 
 async function saveMaskSlice(timepoint) {
@@ -766,6 +861,58 @@ function applyZoom() {
   [el.baselineView, el.followupView].forEach((canvas) => {
     canvas.style.transform = `scale(${state.viewer.zoom})`;
   });
+}
+
+function stopCine() {
+  if (state.viewer.cineTimer) {
+    window.clearInterval(state.viewer.cineTimer);
+    state.viewer.cineTimer = null;
+  }
+  el.playCine.disabled = !state.currentStudyId;
+  el.stopCine.disabled = true;
+}
+
+function playCine() {
+  if (!state.currentStudyId) return;
+  stopCine();
+  const fps = Math.min(30, Math.max(1, Number(el.cineFps.value || 8)));
+  const timepoint = state.viewer.activeSeries;
+  state.viewer.cineTimer = window.setInterval(async () => {
+    const view = state.views[timepoint];
+    view.slice = view.max <= 1 ? 0 : (view.slice + 1) % view.max;
+    const slider = timepoint === "baseline" ? el.baselineSlice : el.followupSlice;
+    slider.value = String(view.slice);
+    try {
+      await refreshSlice(timepoint);
+    } catch (error) {
+      stopCine();
+      setStatus(el.measurementStatus, error.message);
+    }
+  }, Math.round(1000 / fps));
+  el.playCine.disabled = true;
+  el.stopCine.disabled = false;
+  setStatus(el.measurementStatus, `Cine running on ${timepoint === "baseline" ? "primary" : "comparison"} at ${fps} fps.`);
+}
+
+async function resetViewer() {
+  stopCine();
+  state.viewer.plane = "axial";
+  state.viewer.windowCenter = "50";
+  state.viewer.windowWidth = "500";
+  state.viewer.invert = false;
+  state.viewer.zoom = 1;
+  state.viewer.tool = "pan";
+  state.views.baseline.slice = 0;
+  state.views.followup.slice = 0;
+  el.viewerPlane.value = "axial";
+  el.windowCenter.value = "50";
+  el.windowWidth.value = "500";
+  el.viewerInvert.checked = false;
+  el.viewerZoom.value = "1";
+  el.viewerTool.value = "pan";
+  applyZoom();
+  await refreshViewer();
+  setStatus(el.measurementStatus, "Viewer reset to axial review mode.");
 }
 
 async function loadWorklist() {
@@ -824,6 +971,7 @@ async function loadWorkspace(studyId) {
   if (data.study?.file_meta?.baseline) {
     state.views.baseline.slice = 0;
     state.views.followup.slice = 0;
+    applyViewerLayout();
     await refreshViewer();
   }
 }
@@ -1082,7 +1230,22 @@ el.viewerPreset.addEventListener("change", async () => {
   await refreshViewer();
 });
 
+el.viewerLayout.addEventListener("change", async () => {
+  stopCine();
+  state.viewer.layout = el.viewerLayout.value;
+  applyViewerLayout();
+  await refreshViewer();
+});
+
+el.activeSeries.addEventListener("change", async () => {
+  stopCine();
+  state.viewer.activeSeries = el.activeSeries.value;
+  applyViewerLayout();
+  await refreshViewer();
+});
+
 el.viewerPlane.addEventListener("change", async () => {
+  stopCine();
   state.viewer.plane = el.viewerPlane.value;
   state.views.baseline.slice = 0;
   state.views.followup.slice = 0;
@@ -1101,6 +1264,7 @@ el.viewerTool.addEventListener("change", () => {
 });
 
 el.applyWindow.addEventListener("click", async () => {
+  stopCine();
   state.viewer.windowCenter = el.windowCenter.value;
   state.viewer.windowWidth = el.windowWidth.value;
   state.viewer.invert = el.viewerInvert.checked;
@@ -1112,18 +1276,50 @@ el.viewerZoom.addEventListener("input", () => {
   applyZoom();
 });
 
+el.playCine.addEventListener("click", playCine);
+el.stopCine.addEventListener("click", stopCine);
+el.resetViewer.addEventListener("click", () => resetViewer());
+
 el.baselineSlice.addEventListener("input", async () => {
+  stopCine();
   state.views.baseline.slice = Number(el.baselineSlice.value);
+  state.viewer.activeSeries = "baseline";
+  applyViewerLayout();
   await refreshSlice("baseline");
 });
 
 el.followupSlice.addEventListener("input", async () => {
+  stopCine();
   state.views.followup.slice = Number(el.followupSlice.value);
+  state.viewer.activeSeries = "followup";
+  applyViewerLayout();
   await refreshSlice("followup");
 });
 
 el.saveBaseline.addEventListener("click", () => saveMaskSlice("baseline"));
 el.saveFollowup.addEventListener("click", () => saveMaskSlice("followup"));
+
+document.addEventListener("keydown", async (event) => {
+  const typingTarget = ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName) || event.target.isContentEditable;
+  const pacsActive = document.getElementById("panel-pacs").classList.contains("active");
+  if (typingTarget || !pacsActive || !state.currentStudyId) return;
+  const view = state.views[state.viewer.activeSeries];
+  if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    event.preventDefault();
+    stopCine();
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    view.slice = Math.min(Math.max(view.slice + delta, 0), Math.max(0, view.max - 1));
+    await refreshSlice(state.viewer.activeSeries);
+  }
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (state.viewer.cineTimer) {
+      stopCine();
+    } else {
+      playCine();
+    }
+  }
+});
 
 el.startDictation.addEventListener("click", async () => {
   try {
