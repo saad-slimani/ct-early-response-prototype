@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -56,6 +56,9 @@ class StudyRecord(Base):
     )
     ai_tasks = relationship("AiTask", back_populates="study", cascade="all, delete-orphan")
     ai_artifacts = relationship("AiArtifact", back_populates="study", cascade="all, delete-orphan")
+    appointments = relationship("Appointment", back_populates="study", cascade="all, delete-orphan")
+    billing_items = relationship("BillingItem", back_populates="study", cascade="all, delete-orphan")
+    measurements = relationship("ViewerMeasurement", back_populates="study", cascade="all, delete-orphan")
 
 
 class WorklistItem(Base):
@@ -141,3 +144,58 @@ class TrainingRun(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=True, index=True)
+    patient_id = Column(String(64), nullable=False, index=True)
+    patient_name = Column(String(120), nullable=True)
+    modality = Column(String(16), nullable=False, default="CT")
+    procedure = Column(String(160), nullable=False, default="Imaging study")
+    scheduled_for = Column(DateTime, nullable=True, index=True)
+    room = Column(String(80), nullable=True)
+    ordering_provider = Column(String(120), nullable=True)
+    status = Column(String(32), nullable=False, default="scheduled")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    study = relationship("StudyRecord", back_populates="appointments")
+
+
+class BillingItem(Base):
+    __tablename__ = "billing_items"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=True, index=True)
+    patient_id = Column(String(64), nullable=False, index=True)
+    accession_number = Column(String(64), nullable=True, index=True)
+    cpt_code = Column(String(32), nullable=False, default="IMG")
+    description = Column(String(200), nullable=False, default="Imaging interpretation")
+    payer = Column(String(120), nullable=True)
+    amount_cents = Column(Integer, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="draft")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    study = relationship("StudyRecord", back_populates="billing_items")
+
+
+class ViewerMeasurement(Base):
+    __tablename__ = "viewer_measurements"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=False, index=True)
+    timepoint = Column(String(32), nullable=False, default="baseline")
+    plane = Column(String(16), nullable=False, default="axial")
+    slice_index = Column(Integer, nullable=False, default=0)
+    measurement_type = Column(String(32), nullable=False, default="length")
+    label = Column(String(120), nullable=False, default="Measurement")
+    points = Column(JSON, nullable=False)
+    value_mm = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    study = relationship("StudyRecord", back_populates="measurements")

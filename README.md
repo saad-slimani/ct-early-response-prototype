@@ -6,9 +6,14 @@ See [docs/mvp-scaffold.md](docs/mvp-scaffold.md) for the current MVP scaffold th
 
 See [docs/render-deploy.md](docs/render-deploy.md) for the prepared Render deployment path.
 
-This project provides a working prototype for early treatment response estimation in solid cancer CT:
+This project provides a working prototype for an AI-native PACS/RIS workstation with an early treatment response CT workflow:
 
-- Upload baseline CT and early follow-up CT (2-6 weeks)
+- Upload DICOM zip or NIfTI imaging studies across CT, MRI, ultrasound, mammography, and X-ray-style modalities
+- Review studies in an embedded PACS viewer with modality presets, window/level, inversion, zoom, axial/coronal/sagittal MPR, measurements, and segmentation mask editing
+- Manage a RIS worklist with scheduling and billing charge capture
+- Draft reports in a browser word processor and insert AI outputs or saved measurements
+- Dictate reports through a local/open-source speech-to-text adapter such as Whisper.cpp
+- Upload baseline CT and early follow-up CT (2-6 weeks) for the early-response workflow
 - Run semi-automatic lesion segmentation using open-source tooling adapters
 - Review and edit segmentation slice-by-slice in a web viewer
 - Produce an early response score from 0-100
@@ -22,7 +27,8 @@ This project provides a working prototype for early treatment response estimatio
   - `TotalSegmentator` CLI adapter (if installed)
   - region-growing fallback (bounded seeded grower)
 - Radiomics/modeling: handcrafted radiomics + lightweight linear regression
-- Frontend: HTML/CSS/vanilla JS canvas viewer/editor
+- Speech-to-text: optional open-source Whisper.cpp adapter
+- Frontend: HTML/CSS/vanilla JS PACS/RIS workstation
 
 ## Run
 
@@ -42,7 +48,9 @@ Configuration starts from [.env.example](.env.example).
 Upload either:
 
 - NIfTI: `.nii` or `.nii.gz`
-- DICOM archive: `.zip` containing one CT series
+- DICOM archive: `.zip` containing one imaging series
+
+For single-frame X-ray, mammography, or ultrasound studies, upload the primary series and leave the comparison upload empty. The app stores a one-slice volume internally so the same viewer controls still work.
 
 ## API overview
 
@@ -52,13 +60,30 @@ Upload either:
 - `PATCH /api/studies/{id}/worklist` update workflow status and assignment
 - `GET /api/studies/{id}/report` read the current draft report
 - `PUT /api/studies/{id}/report` save report draft or finalize it
-- `GET /api/studies/{id}/slice` retrieve a CT + mask slice PNG
+- `GET /api/studies/{id}/slice` retrieve an image + mask plane PNG with window/MPR options
 - `PUT /api/studies/{id}/mask/slice` persist edited slice mask
+- `GET /api/studies/{id}/measurements` list viewer measurements
+- `POST /api/studies/{id}/measurements` save a viewer measurement
 - `POST /api/studies/{id}/segment/auto` run semi-auto segmentation
 - `POST /api/studies/{id}/ai/tasks` run scaffolded AI tasks
+- `GET /api/schedule` and `POST /api/schedule` manage RIS appointments
+- `GET /api/billing` and `POST /api/billing` manage billing items
+- `GET /api/speech/status` inspect the local speech engine
+- `POST /api/speech/transcribe` transcribe browser microphone audio when Whisper.cpp is configured
 - `GET /api/models` inspect the indexed model catalog
 - `POST /api/model/train` fit the radiomics model from labels
 - `GET /api/training-runs` inspect fine-tune requests
+
+## Open-source dictation
+
+The hosted free Render deployment leaves speech disabled by default. To enable local/open-source dictation, install Whisper.cpp and ffmpeg, download a Whisper model, then set:
+
+```bash
+STT_PROVIDER=whisper_cpp
+WHISPER_CPP_BINARY=/path/to/whisper-cli
+WHISPER_CPP_MODEL=/path/to/ggml-base.en.bin
+FFMPEG_BINARY=ffmpeg
+```
 
 ## Notes for production hardening
 

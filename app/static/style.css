@@ -89,6 +89,13 @@ h3 {
   font-size: 1rem;
 }
 
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
 .integration-strip {
   display: flex;
   gap: 10px;
@@ -192,6 +199,20 @@ button {
   transition: transform 120ms ease, background 120ms ease;
 }
 
+button.secondary {
+  background: #203247;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: #122033;
+}
+
+button.primary-wide {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 1rem;
+}
+
 button:hover:not(:disabled) {
   transform: translateY(-1px);
   background: var(--accent-strong);
@@ -210,6 +231,21 @@ button:disabled {
   border: 1px solid var(--line);
   background: rgba(248, 250, 252, 0.9);
   padding: 12px 14px;
+}
+
+.intake-card {
+  border-color: rgba(11, 118, 103, 0.38);
+  box-shadow: 0 24px 60px rgba(11, 118, 103, 0.14);
+}
+
+.upload-drop {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed rgba(11, 118, 103, 0.55);
+  border-radius: 14px;
+  background: rgba(11, 118, 103, 0.06);
 }
 
 .summary-panel {
@@ -292,11 +328,39 @@ button:disabled {
   gap: 18px;
 }
 
+.viewer-shell {
+  background: rgba(7, 13, 22, 0.94);
+  color: #edf5f8;
+  border-color: rgba(141, 165, 184, 0.35);
+}
+
+.viewer-shell h2,
+.viewer-shell h3,
+.viewer-shell label {
+  color: #edf5f8;
+}
+
+.viewer-shell .status-box,
+.viewer-shell .list-card,
+.viewer-shell .viewer-card {
+  background: rgba(17, 27, 41, 0.9);
+  border-color: rgba(143, 160, 180, 0.42);
+}
+
+.viewer-toolbar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(110px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+}
+
 .viewer-card {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 14px;
   background: rgba(255, 255, 255, 0.76);
+  overflow: auto;
 }
 
 canvas {
@@ -306,6 +370,68 @@ canvas {
   border-radius: 14px;
   background: #02060c;
   image-rendering: pixelated;
+  transform-origin: center center;
+}
+
+.report-card {
+  align-content: start;
+}
+
+.editor-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.editor-toolbar button {
+  min-width: 42px;
+  padding: 8px 10px;
+  background: #203247;
+}
+
+.rich-editor {
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--panel-strong);
+  line-height: 1.55;
+  outline: none;
+  overflow: auto;
+}
+
+.rich-editor:focus {
+  border-color: rgba(11, 118, 103, 0.72);
+  box-shadow: 0 0 0 3px rgba(11, 118, 103, 0.12);
+}
+
+.compact-editor {
+  min-height: 120px;
+}
+
+.dictation-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(11, 118, 103, 0.22);
+  border-radius: 14px;
+  background: rgba(11, 118, 103, 0.06);
+}
+
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 18px 0;
+}
+
+.mini-form {
+  margin-bottom: 12px;
 }
 
 .muted-list {
@@ -325,7 +451,9 @@ canvas {
 @media (max-width: 1240px) {
   .workspace-grid,
   .two-up,
-  .viewer-grid {
+  .viewer-grid,
+  .viewer-toolbar,
+  .upload-drop {
     grid-template-columns: 1fr;
   }
 

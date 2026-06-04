@@ -6,7 +6,18 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import AiArtifact, AiTask, Patient, Report, StudyRecord, TrainingRun, WorklistItem
+from app.models import (
+    AiArtifact,
+    AiTask,
+    Appointment,
+    BillingItem,
+    Patient,
+    Report,
+    StudyRecord,
+    TrainingRun,
+    ViewerMeasurement,
+    WorklistItem,
+)
 
 
 class WorkflowService:
@@ -22,7 +33,9 @@ class WorkflowService:
         patient_identifier: str,
         patient_name: Optional[str],
         accession_number: Optional[str],
+        modality: str,
         body_part: str,
+        description: Optional[str],
         priority: str,
         indication: Optional[str],
         assignee: Optional[str],
@@ -41,7 +54,9 @@ class WorkflowService:
             id=study_id,
             patient=patient,
             accession_number=accession_number or self._make_accession(study_id),
+            modality=modality or "CT",
             body_part=body_part or "Chest",
+            description=description or f"{modality or 'Imaging'} study",
             baseline_path=baseline_path,
             followup_path=followup_path,
             status="ready_to_read",
@@ -84,6 +99,9 @@ class WorkflowService:
                 selectinload(StudyRecord.report),
                 selectinload(StudyRecord.ai_tasks).selectinload(AiTask.artifacts),
                 selectinload(StudyRecord.ai_artifacts),
+                selectinload(StudyRecord.appointments),
+                selectinload(StudyRecord.billing_items),
+                selectinload(StudyRecord.measurements),
             )
         )
         study = db.execute(stmt).scalar_one_or_none()
@@ -318,6 +336,122 @@ class WorkflowService:
         rows = db.execute(stmt).scalars().all()
         return [self.serialize_training_run(run) for run in rows]
 
+    def create_appointment(
+        self,
+        db: Session,
+        *,
+        study_id: Optional[str],
+        patient_id: str,
+        patient_name: Optional[str],
+        modality: str,
+        procedure: str,
+        scheduled_for: Optional[datetime],
+        room: Optional[str],
+        ordering_provider: Optional[str],
+        status: str,
+        notes: Optional[str],
+    ) -> Appointment:
+        if study_id:
+            self.get_study(db, study_id)
+        row = Appointment(
+            study_id=study_id or None,
+            patient_id=patient_id,
+            patient_name=patient_name or None,
+            modality=modality or "CT",
+            procedure=procedure or "Imaging study",
+            scheduled_for=scheduled_for,
+            room=room or None,
+            ordering_provider=ordering_provider or None,
+            status=status or "scheduled",
+            notes=notes or "",
+            updated_at=datetime.utcnow(),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    def list_appointments(self, db: Session) -> List[Dict[str, Any]]:
+        stmt = select(Appointment).order_by(Appointment.scheduled_for.asc(), Appointment.created_at.desc())
+        rows = db.execute(stmt).scalars().all()
+        ordered = sorted(rows, key=lambda row: (row.scheduled_for is None, row.scheduled_for or datetime.max, row.created_at), reverse=False)
+        return [self.serialize_appointment(row) for row in ordered]
+
+    def create_billing_item(
+        self,
+        db: Session,
+        *,
+        study_id: Optional[str],
+        patient_id: str,
+        accession_number: Optional[str],
+        cpt_code: str,
+        description: str,
+        payer: Optional[str],
+        amount_cents: int,
+        status: str,
+    ) -> BillingItem:
+        if study_id:
+            self.get_study(db, study_id)
+        row = BillingItem(
+            study_id=study_id or None,
+            patient_id=patient_id,
+            accession_number=accession_number or None,
+            cpt_code=cpt_code or "IMG",
+            description=description or "Imaging interpretation",
+            payer=payer or None,
+            amount_cents=max(0, int(amount_cents or 0)),
+            status=status or "draft",
+            updated_at=datetime.utcnow(),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    def list_billing_items(self, db: Session) -> List[Dict[str, Any]]:
+        stmt = select(BillingItem).order_by(BillingItem.created_at.desc())
+        rows = db.execute(stmt).scalars().all()
+        return [self.serialize_billing_item(row) for row in rows]
+
+    def create_measurement(
+        self,
+        db: Session,
+        *,
+        study_id: str,
+        timepoint: str,
+        plane: str,
+        slice_index: int,
+        measurement_type: str,
+        label: str,
+        points: List[Dict[str, float]],
+        value_mm: Optional[float],
+    ) -> ViewerMeasurement:
+        self.get_study(db, study_id)
+        row = ViewerMeasurement(
+            study_id=study_id,
+            timepoint=timepoint,
+            plane=plane,
+            slice_index=slice_index,
+            measurement_type=measurement_type or "length",
+            label=label or "Measurement",
+            points=points,
+            value_mm=value_mm,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    def list_measurements(self, db: Session, study_id: str) -> List[Dict[str, Any]]:
+        self.get_study(db, study_id)
+        stmt = (
+            select(ViewerMeasurement)
+            .where(ViewerMeasurement.study_id == study_id)
+            .order_by(ViewerMeasurement.created_at.desc())
+        )
+        rows = db.execute(stmt).scalars().all()
+        return [self.serialize_measurement(row) for row in rows]
+
     def serialize_workspace(
         self,
         study: StudyRecord,
@@ -334,6 +468,9 @@ class WorkflowService:
             "report": self.serialize_report(study.report),
             "ai_tasks": [self.serialize_ai_task(task) for task in ai_tasks],
             "ai_artifacts": [self.serialize_ai_artifact(artifact) for artifact in artifacts],
+            "appointments": [self.serialize_appointment(row) for row in sorted(study.appointments, key=lambda row: row.created_at, reverse=True)],
+            "billing_items": [self.serialize_billing_item(row) for row in sorted(study.billing_items, key=lambda row: row.created_at, reverse=True)],
+            "measurements": [self.serialize_measurement(row) for row in sorted(study.measurements, key=lambda row: row.created_at, reverse=True)],
             "integrations": integrations,
             "viewer_context": viewer_context,
         }
@@ -434,6 +571,52 @@ class WorkflowService:
             "notes": run.notes or "",
             "created_at": run.created_at.isoformat(),
             "updated_at": run.updated_at.isoformat(),
+        }
+
+    def serialize_appointment(self, row: Appointment) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "study_id": row.study_id,
+            "patient_id": row.patient_id,
+            "patient_name": row.patient_name,
+            "modality": row.modality,
+            "procedure": row.procedure,
+            "scheduled_for": row.scheduled_for.isoformat() if row.scheduled_for else None,
+            "room": row.room,
+            "ordering_provider": row.ordering_provider,
+            "status": row.status,
+            "notes": row.notes or "",
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        }
+
+    def serialize_billing_item(self, row: BillingItem) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "study_id": row.study_id,
+            "patient_id": row.patient_id,
+            "accession_number": row.accession_number,
+            "cpt_code": row.cpt_code,
+            "description": row.description,
+            "payer": row.payer,
+            "amount_cents": row.amount_cents,
+            "status": row.status,
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        }
+
+    def serialize_measurement(self, row: ViewerMeasurement) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "study_id": row.study_id,
+            "timepoint": row.timepoint,
+            "plane": row.plane,
+            "slice_index": row.slice_index,
+            "measurement_type": row.measurement_type,
+            "label": row.label,
+            "points": row.points,
+            "value_mm": row.value_mm,
+            "created_at": row.created_at.isoformat(),
         }
 
     def _append_block(self, existing: Optional[str], snippet: str) -> str:

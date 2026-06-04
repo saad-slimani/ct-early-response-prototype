@@ -23,6 +23,19 @@ def _read_dicom_series_from_dir(root: Path) -> sitk.Image:
     return reader.Execute()
 
 
+def ensure_3d_image(image: sitk.Image) -> sitk.Image:
+    if image.GetDimension() == 3:
+        return image
+    if image.GetDimension() != 2:
+        raise ValueError(f"Unsupported image dimension: {image.GetDimension()}")
+    image3d = sitk.JoinSeries(image)
+    spacing = list(image.GetSpacing()) + [1.0]
+    origin = list(image.GetOrigin()) + [0.0]
+    image3d.SetSpacing(spacing)
+    image3d.SetOrigin(origin)
+    return image3d
+
+
 def load_scan_from_file(upload_path: Path) -> sitk.Image:
     suffixes = upload_path.suffixes
     if upload_path.suffix == ".zip":
@@ -30,10 +43,10 @@ def load_scan_from_file(upload_path: Path) -> sitk.Image:
             tdir = Path(td)
             with zipfile.ZipFile(upload_path, "r") as zf:
                 zf.extractall(tdir)
-            return _read_dicom_series_from_dir(tdir)
+            return ensure_3d_image(_read_dicom_series_from_dir(tdir))
 
     if suffixes[-2:] == [".nii", ".gz"] or upload_path.suffix == ".nii":
-        return sitk.ReadImage(str(upload_path))
+        return ensure_3d_image(sitk.ReadImage(str(upload_path)))
 
     raise ValueError("Unsupported format. Use .nii, .nii.gz, or DICOM .zip")
 
@@ -43,11 +56,32 @@ def save_nifti(image: sitk.Image, output_path: Path) -> None:
     sitk.WriteImage(image, str(output_path), useCompression=True)
 
 
-def normalize_ct_slice(arr2d: np.ndarray) -> np.ndarray:
-    low, high = -200.0, 300.0
+def normalize_image_slice(
+    arr2d: np.ndarray,
+    *,
+    window_center: float | None = None,
+    window_width: float | None = None,
+    invert: bool = False,
+) -> np.ndarray:
+    if window_center is None or window_width is None or window_width <= 0:
+        low, high = float(np.percentile(arr2d, 1)), float(np.percentile(arr2d, 99))
+        if low == high:
+            low, high = float(arr2d.min()), float(arr2d.max() or arr2d.min() + 1)
+    else:
+        low = float(window_center) - float(window_width) / 2.0
+        high = float(window_center) + float(window_width) / 2.0
+
+    if low == high:
+        high = low + 1.0
     clipped = np.clip(arr2d, low, high)
     scaled = ((clipped - low) / (high - low) * 255.0).astype(np.uint8)
+    if invert:
+        scaled = 255 - scaled
     return scaled
+
+
+def normalize_ct_slice(arr2d: np.ndarray) -> np.ndarray:
+    return normalize_image_slice(arr2d, window_center=50.0, window_width=500.0)
 
 
 def make_png_base64(arr2d: np.ndarray) -> str:
@@ -67,7 +101,10 @@ def decode_mask_png_b64(mask_png_b64: str, expected_hw: Tuple[int, int]) -> np.n
 
 
 def image_to_numpy_zyx(image: sitk.Image) -> np.ndarray:
-    return sitk.GetArrayFromImage(image)
+    arr = sitk.GetArrayFromImage(image)
+    if arr.ndim == 2:
+        return arr[np.newaxis, :, :]
+    return arr
 
 
 def numpy_to_image_zyx(arr: np.ndarray, reference: sitk.Image) -> sitk.Image:
