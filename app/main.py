@@ -19,11 +19,13 @@ from app.db import engine, get_db, init_db
 from app.services.imaging import (
     create_empty_mask,
     decode_mask_png_b64,
+    discover_dicom_series,
     image_to_numpy_zyx,
     load_scan_from_file,
     make_png_base64,
     normalize_image_slice,
     numpy_to_image_zyx,
+    read_dicom_series_from_dir,
     save_nifti,
     scan_stats,
 )
@@ -170,6 +172,18 @@ def _parse_form_datetime(value: str) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}") from exc
+
+
+def _safe_upload_filename(filename: str, index: int) -> str:
+    name = Path((filename or "").replace("\\", "/")).name or f"dicom_{index:06d}.dcm"
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
+    return f"{index:06d}_{safe[:120]}"
+
+
+def _bulk_accession(metadata: Dict[str, Any], study_id: str, index: int) -> str:
+    raw = str(metadata.get("accession_number") or "DICOM").strip() or "DICOM"
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in raw)[:40]
+    return f"{safe}-{study_id[:8]}-{index + 1}"
 
 
 def _plane_size(shape_zyx: tuple[int, int, int], plane: str) -> int:
@@ -480,6 +494,134 @@ async def create_study(
         return {"study_id": study_id, "meta": store.read_meta(study_id), "workspace": _workspace_payload(db, study_id)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/dicom/bulk")
+async def bulk_upload_dicom_folder(
+    dicom_files: List[UploadFile] = File(...),
+    priority: Literal["routine", "urgent", "stat"] = Form(default="routine"),
+    assignee: str = Form(default=""),
+    room: str = Form(default=""),
+    ordering_provider: str = Form(default=""),
+    payer: str = Form(default=""),
+    cpt_code: str = Form(default="IMG"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    if not dicom_files:
+        raise HTTPException(status_code=400, detail="Upload at least one DICOM file.")
+
+    created: List[Dict[str, Any]] = []
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        written = 0
+        for index, upload in enumerate(dicom_files):
+            payload = await upload.read()
+            if not payload:
+                continue
+            (root / _safe_upload_filename(upload.filename or "", index)).write_bytes(payload)
+            written += 1
+
+        if written == 0:
+            raise HTTPException(status_code=400, detail="Uploaded DICOM folder was empty.")
+
+        series_rows = discover_dicom_series(root)
+        if not series_rows:
+            raise HTTPException(status_code=400, detail="No DICOM series found in uploaded folder.")
+
+        for index, metadata in enumerate(series_rows):
+            study_id = store.create_study()
+            image = read_dicom_series_from_dir(root, str(metadata["series_id"]))
+            for timepoint in ("baseline", "followup"):
+                save_nifti(image, store.image_path(study_id, timepoint))
+                save_nifti(create_empty_mask(image), store.mask_path(study_id, timepoint))
+
+            stats = scan_stats(sitk.ReadImage(str(store.image_path(study_id, "baseline"))))
+            patient_id = str(metadata.get("patient_id") or f"DICOM-{study_id[:8]}").strip()
+            patient_name = str(metadata.get("patient_name") or "").replace("^", " ").strip()
+            modality = str(metadata.get("modality") or "CT").strip() or "CT"
+            body_part = str(metadata.get("body_part") or "Unspecified").strip() or "Unspecified"
+            description = (
+                str(metadata.get("series_description") or metadata.get("study_description") or f"{modality} DICOM series")
+                .replace("^", " ")
+                .strip()
+            )
+            accession = _bulk_accession(metadata, study_id, index)
+
+            store.write_meta(
+                study_id,
+                {
+                    "patient_id": patient_id,
+                    "modality": modality,
+                    "description": description,
+                    "comparison_uploaded": False,
+                    "source": "dicom-folder",
+                    "dicom_metadata": metadata,
+                    "baseline": stats,
+                    "followup": stats,
+                },
+            )
+            workflow.bootstrap_study(
+                db,
+                study_id=study_id,
+                patient_identifier=patient_id,
+                patient_name=patient_name or None,
+                accession_number=accession,
+                modality=modality,
+                body_part=body_part,
+                description=description,
+                dicom_study_uid=str(metadata.get("study_instance_uid") or "") or None,
+                archive_source="dicom-folder-upload",
+                priority=priority,
+                indication=description,
+                assignee=assignee or None,
+                baseline_path=str(store.image_path(study_id, "baseline")),
+                followup_path=str(store.image_path(study_id, "followup")),
+            )
+            workflow.create_appointment(
+                db,
+                study_id=study_id,
+                patient_id=patient_id,
+                patient_name=patient_name or None,
+                modality=modality,
+                procedure=description,
+                scheduled_for=None,
+                room=room or None,
+                ordering_provider=ordering_provider or None,
+                status="arrived",
+                notes="Created from bulk DICOM folder upload.",
+            )
+            workflow.create_billing_item(
+                db,
+                study_id=study_id,
+                patient_id=patient_id,
+                accession_number=accession,
+                cpt_code=cpt_code or "IMG",
+                description=description,
+                payer=payer or None,
+                amount_cents=0,
+                status="draft",
+            )
+            created.append(
+                {
+                    "study_id": study_id,
+                    "accession_number": accession,
+                    "patient_id": patient_id,
+                    "patient_name": patient_name,
+                    "modality": modality,
+                    "description": description,
+                    "instance_count": metadata.get("instance_count", 0),
+                    "metadata": metadata,
+                }
+            )
+
+    first_workspace = _workspace_payload(db, created[0]["study_id"]) if created else None
+    return {
+        "created_count": len(created),
+        "uploaded_files": written,
+        "series": created,
+        "first_study_id": created[0]["study_id"] if created else None,
+        "first_workspace": first_workspace,
+    }
 
 
 @app.get("/api/studies/{study_id}")

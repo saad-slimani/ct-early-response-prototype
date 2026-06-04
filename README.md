@@ -8,11 +8,11 @@ See [docs/render-deploy.md](docs/render-deploy.md) for the prepared Render deplo
 
 This project provides a working prototype for an AI-native PACS/RIS workstation with an early treatment response CT workflow:
 
-- Upload DICOM zip or NIfTI imaging studies across CT, MRI, ultrasound, mammography, and X-ray-style modalities
+- Bulk upload DICOM folders with metadata extraction, or upload DICOM zip/NIfTI studies across CT, MRI, ultrasound, mammography, and X-ray-style modalities
 - Review studies in an embedded PACS viewer with modality presets, window/level, inversion, zoom, axial/coronal/sagittal MPR, measurements, and segmentation mask editing
 - Manage a RIS worklist with scheduling and billing charge capture
 - Draft reports in a browser word processor and insert AI outputs or saved measurements
-- Dictate reports through a local/open-source speech-to-text adapter such as Whisper.cpp
+- Dictate reports through hosted browser speech recognition or a local/open-source speech-to-text adapter such as Whisper.cpp
 - Upload baseline CT and early follow-up CT (2-6 weeks) for the early-response workflow
 - Run semi-automatic lesion segmentation using open-source tooling adapters
 - Review and edit segmentation slice-by-slice in a web viewer
@@ -28,6 +28,7 @@ This project provides a working prototype for an AI-native PACS/RIS workstation 
   - region-growing fallback (bounded seeded grower)
 - Radiomics/modeling: handcrafted radiomics + lightweight linear regression
 - Speech-to-text: optional open-source Whisper.cpp adapter
+- Hosted dictation fallback: browser `SpeechRecognition` when the backend model is not configured
 - Frontend: HTML/CSS/vanilla JS PACS/RIS workstation
 
 ## Run
@@ -47,14 +48,16 @@ Configuration starts from [.env.example](.env.example).
 
 Upload either:
 
+- DICOM folder: select a local folder from the bulk import panel
 - NIfTI: `.nii` or `.nii.gz`
 - DICOM archive: `.zip` containing one imaging series
 
-For single-frame X-ray, mammography, or ultrasound studies, upload the primary series and leave the comparison upload empty. The app stores a one-slice volume internally so the same viewer controls still work.
+For single-frame X-ray, mammography, or ultrasound studies, upload the primary series and leave the comparison upload empty. Folder imports and single-frame studies store a one-slice volume internally so the same viewer controls still work.
 
 ## API overview
 
 - `POST /api/studies` create a study workspace from baseline/follow-up uploads
+- `POST /api/dicom/bulk` create one worklist-ready study per DICOM series in a folder upload
 - `GET /api/worklist` list reading queue items
 - `GET /api/studies/{id}/workspace` retrieve study, worklist, report, AI, and integration context
 - `PATCH /api/studies/{id}/worklist` update workflow status and assignment
@@ -74,9 +77,9 @@ For single-frame X-ray, mammography, or ultrasound studies, upload the primary s
 - `POST /api/model/train` fit the radiomics model from labels
 - `GET /api/training-runs` inspect fine-tune requests
 
-## Open-source dictation
+## Dictation
 
-The hosted free Render deployment leaves speech disabled by default. To enable local/open-source dictation, install Whisper.cpp and ffmpeg, download a Whisper model, then set:
+The hosted free Render deployment uses browser speech recognition when available, so the report dictation button can work without shipping a large model. To enable local/open-source backend dictation, install Whisper.cpp and ffmpeg, download a Whisper model, then set:
 
 ```bash
 STT_PROVIDER=whisper_cpp

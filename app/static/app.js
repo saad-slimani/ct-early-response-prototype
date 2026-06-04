@@ -34,20 +34,27 @@ const state = {
   },
   painting: { active: false, timepoint: null },
   measuring: { active: false, timepoint: null, start: null, preview: null },
-  dictation: { recorder: null, chunks: [], stream: null },
+  dictation: { recorder: null, chunks: [], stream: null, recognition: null, mode: null, transcript: "" },
   activeEditor: null,
 };
 
 const el = {
+  navTabs: Array.from(document.querySelectorAll(".workspace-tab")),
+  panels: Array.from(document.querySelectorAll(".workspace-panel")),
   integrationStrip: document.getElementById("integration-strip"),
   jumpUpload: document.getElementById("jump-upload"),
   jumpViewer: document.getElementById("jump-viewer"),
+  bulkDicomForm: document.getElementById("bulk-dicom-form"),
+  bulkDicomFolder: document.getElementById("bulk-dicom-folder"),
+  bulkDicomStatus: document.getElementById("bulk-dicom-status"),
+  bulkDicomResults: document.getElementById("bulk-dicom-results"),
   uploadForm: document.getElementById("upload-form"),
   studyStatus: document.getElementById("study-status"),
   refreshWorklist: document.getElementById("refresh-worklist"),
   worklistBody: document.getElementById("worklist-body"),
   worklistEmpty: document.getElementById("worklist-empty"),
   studySummary: document.getElementById("study-summary"),
+  metadataPanel: document.getElementById("metadata-panel"),
   launchLinks: document.getElementById("launch-links"),
   worklistStatus: document.getElementById("worklist-status"),
   worklistPriority: document.getElementById("worklist-priority"),
@@ -183,10 +190,19 @@ function formPayload(form) {
   return payload;
 }
 
+function switchPanel(panelName) {
+  el.navTabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.panel === panelName));
+  el.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${panelName}`));
+}
+
+function speechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
 function renderIntegrations() {
   if (!state.integrations) return;
   const { archive, viewer, ehr } = state.integrations;
-  const speechConfigured = state.speech?.configured;
+  const speechConfigured = state.speech?.configured || Boolean(speechRecognitionCtor());
   const pills = [
     { label: `Archive ${archive.configured ? "configured" : "scaffold"}`, warning: !archive.configured },
     { label: `Viewer ${viewer.configured ? "configured" : "embedded"}`, warning: false },
@@ -195,6 +211,29 @@ function renderIntegrations() {
   ];
   el.integrationStrip.innerHTML = pills
     .map((item) => `<span class="pill${item.warning ? " warning" : ""}">${escapeHtml(item.label)}</span>`)
+    .join("");
+}
+
+function renderBulkDicomResults(result) {
+  const series = result.series || [];
+  if (!series.length) {
+    el.bulkDicomResults.innerHTML = "";
+    return;
+  }
+  el.bulkDicomResults.innerHTML = series
+    .map(
+      (item) => `
+        <div class="list-card">
+          <div class="section-head">
+            <strong>${escapeHtml(item.patient_name || item.patient_id || "Unknown patient")}</strong>
+            <span class="tag">${escapeHtml(item.modality || "DICOM")}</span>
+          </div>
+          <div>${escapeHtml(item.description || "DICOM series")}</div>
+          <div class="muted-line">Accession ${escapeHtml(item.accession_number)} | ${Number(item.instance_count || 0)} instances</div>
+          <div class="mono">${escapeHtml(item.metadata?.study_instance_uid || item.study_id)}</div>
+        </div>
+      `
+    )
     .join("");
 }
 
@@ -374,12 +413,47 @@ function renderWorkspace() {
   );
   el.launchLinks.innerHTML = launchRows.join("");
 
+  renderMetadataPanel(meta);
   state.measurements = workspace.measurements || [];
   renderMeasurements();
   renderAiTasks();
   renderWorklist();
   setUrlStudyId(study.study_id);
   toggleWorkspaceButtons(true);
+}
+
+function renderMetadataPanel(meta) {
+  const dicom = meta.dicom_metadata || {};
+  const baseline = meta.baseline || {};
+  const rows = [
+    ["Patient ID", dicom.patient_id || meta.patient_id],
+    ["Patient name", (dicom.patient_name || "").replaceAll("^", " ")],
+    ["Accession", dicom.accession_number],
+    ["Modality", dicom.modality || meta.modality],
+    ["Body part", dicom.body_part],
+    ["Study", dicom.study_description || meta.description],
+    ["Series", dicom.series_description],
+    ["Study UID", dicom.study_instance_uid],
+    ["Series UID", dicom.series_instance_uid],
+    ["Instances", dicom.instance_count],
+    ["Shape", baseline.shape_zyx?.join(" x ")],
+    ["Spacing", baseline.spacing_xyz?.map((v) => Number(v).toFixed(3)).join(" / ")],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+
+  if (!rows.length) {
+    el.metadataPanel.innerHTML = `<div class="empty-state" style="display:block">No DICOM metadata loaded yet.</div>`;
+    return;
+  }
+  el.metadataPanel.innerHTML = rows
+    .map(
+      ([label, value]) => `
+        <div class="metadata-row">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `
+    )
+    .join("");
 }
 
 function renderAiTasks() {
@@ -732,7 +806,13 @@ async function loadIntegrations() {
 
 async function loadSpeechStatus() {
   state.speech = await api("/api/speech/status");
-  setStatus(el.speechStatus, state.speech.message);
+  const browserFallback = Boolean(speechRecognitionCtor());
+  const message = state.speech.configured
+    ? state.speech.message
+    : browserFallback
+      ? "Hosted browser dictation is available. Configure Whisper.cpp for local open-source backend dictation."
+      : state.speech.message;
+  setStatus(el.speechStatus, message);
   renderIntegrations();
 }
 
@@ -769,8 +849,50 @@ async function runTask(taskType, modelId, prompt, insertIntoReport) {
   await loadWorklist();
 }
 
-el.jumpUpload.addEventListener("click", () => document.getElementById("intake-card").scrollIntoView({ behavior: "smooth", block: "start" }));
-el.jumpViewer.addEventListener("click", () => document.getElementById("viewer-card").scrollIntoView({ behavior: "smooth", block: "start" }));
+el.navTabs.forEach((tab) => {
+  tab.addEventListener("click", () => switchPanel(tab.dataset.panel));
+});
+
+el.jumpUpload.addEventListener("click", () => {
+  switchPanel("worklist");
+  document.getElementById("intake-card").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+el.jumpViewer.addEventListener("click", () => {
+  switchPanel("pacs");
+  document.getElementById("viewer-card").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+el.bulkDicomFolder.addEventListener("change", () => {
+  const count = el.bulkDicomFolder.files?.length || 0;
+  setStatus(el.bulkDicomStatus, count ? `${count} DICOM folder files selected.` : "No DICOM folder selected.");
+});
+
+el.bulkDicomForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const files = Array.from(el.bulkDicomFolder.files || []);
+    if (!files.length) {
+      throw new Error("Select a DICOM folder first.");
+    }
+    const formData = new FormData();
+    files.forEach((file) => formData.append("dicom_files", file, file.webkitRelativePath || file.name));
+    ["priority", "assignee", "room", "ordering_provider", "payer", "cpt_code"].forEach((name) => {
+      const value = el.bulkDicomForm.elements[name]?.value || "";
+      if (value) formData.append(name, value);
+    });
+    setStatus(el.bulkDicomStatus, `Importing ${files.length} DICOM files and extracting metadata...`);
+    const data = await api("/api/dicom/bulk", { method: "POST", body: formData });
+    setStatus(el.bulkDicomStatus, `Imported ${data.created_count} DICOM series from ${data.uploaded_files} files.`);
+    renderBulkDicomResults(data);
+    await Promise.all([loadWorklist(), loadSchedule(), loadBilling()]);
+    if (data.first_study_id) {
+      await loadWorkspace(data.first_study_id);
+      switchPanel("pacs");
+    }
+  } catch (error) {
+    setStatus(el.bulkDicomStatus, error.message);
+  }
+});
 
 el.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -780,6 +902,7 @@ el.uploadForm.addEventListener("submit", async (event) => {
     setStatus(el.studyStatus, `Study created: ${data.study_id}`);
     await Promise.all([loadWorklist(), loadSchedule(), loadBilling()]);
     await loadWorkspace(data.study_id);
+    switchPanel("pacs");
     document.getElementById("viewer-card").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     setStatus(el.studyStatus, error.message);
@@ -792,6 +915,7 @@ el.worklistBody.addEventListener("click", async (event) => {
   const row = event.target.closest("tr[data-study-id]");
   if (!row) return;
   await loadWorkspace(row.dataset.studyId);
+  switchPanel("pacs");
 });
 
 el.saveWorklist.addEventListener("click", async () => {
@@ -1003,9 +1127,17 @@ el.saveFollowup.addEventListener("click", () => saveMaskSlice("followup"));
 
 el.startDictation.addEventListener("click", async () => {
   try {
+    if (!state.speech?.configured && speechRecognitionCtor()) {
+      startBrowserDictation();
+      return;
+    }
+    if (!state.speech?.configured) {
+      throw new Error("Configure Whisper.cpp or use a browser with SpeechRecognition support for hosted dictation.");
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       throw new Error("This browser does not expose microphone recording APIs.");
     }
+    state.dictation.mode = "backend";
     state.dictation.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     state.dictation.chunks = [];
     state.dictation.recorder = new MediaRecorder(state.dictation.stream);
@@ -1023,12 +1155,69 @@ el.startDictation.addEventListener("click", async () => {
 });
 
 el.stopDictation.addEventListener("click", () => {
+  if (state.dictation.mode === "browser" && state.dictation.recognition) {
+    state.dictation.recognition.stop();
+    setStatus(el.dictationStatus, "Finalizing browser transcript...");
+    return;
+  }
   if (!state.dictation.recorder) return;
   state.dictation.recorder.stop();
   state.dictation.stream?.getTracks().forEach((track) => track.stop());
   el.stopDictation.disabled = true;
   setStatus(el.dictationStatus, "Transcribing with configured open-source model...");
 });
+
+function startBrowserDictation() {
+  const Recognition = speechRecognitionCtor();
+  if (!Recognition) {
+    throw new Error("This browser does not support built-in speech recognition.");
+  }
+  const recognition = new Recognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "en-US";
+  state.dictation.mode = "browser";
+  state.dictation.transcript = "";
+  state.dictation.recognition = recognition;
+
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const chunk = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) {
+        state.dictation.transcript += `${chunk.trim()} `;
+      } else {
+        interim += chunk;
+      }
+    }
+    const preview = `${state.dictation.transcript}${interim}`.trim();
+    setStatus(el.dictationStatus, preview ? `Dictating: ${preview}` : "Listening...");
+  };
+
+  recognition.onerror = (event) => {
+    setStatus(el.dictationStatus, event.error || "Browser dictation failed.");
+  };
+
+  recognition.onend = () => {
+    const transcript = state.dictation.transcript.trim();
+    if (transcript) {
+      const target = el.dictationTarget.value === "impression" ? el.reportImpression : el.reportFindings;
+      insertTextIntoEditor(target, transcript);
+      setStatus(el.dictationStatus, "Inserted transcript from browser speech recognition.");
+    } else {
+      setStatus(el.dictationStatus, "No transcript captured.");
+    }
+    state.dictation.mode = null;
+    state.dictation.recognition = null;
+    el.startDictation.disabled = false;
+    el.stopDictation.disabled = true;
+  };
+
+  recognition.start();
+  el.startDictation.disabled = true;
+  el.stopDictation.disabled = false;
+  setStatus(el.dictationStatus, "Listening with browser speech recognition...");
+}
 
 async function transcribeDictation() {
   try {
@@ -1042,6 +1231,7 @@ async function transcribeDictation() {
   } catch (error) {
     setStatus(el.dictationStatus, error.message);
   } finally {
+    state.dictation.mode = null;
     el.startDictation.disabled = false;
     el.stopDictation.disabled = true;
   }

@@ -8,95 +8,73 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="hero card">
+      <section class="hero workstation-hero">
         <div>
-          <p class="eyebrow">AI-Native PACS/RIS MVP</p>
+          <p class="eyebrow">AI-Native PACS/RIS</p>
           <h1>Diagnostic Imaging Workstation</h1>
           <p class="hero-copy">
-            Upload DICOM or NIfTI studies, manage the RIS queue, read with MPR/windowing/measurements, dictate reports, and route AI outputs into the draft.
+            Bulk import DICOM folders, route the RIS queue, read in a PACS viewer, dictate reports, and keep AI outputs beside the draft.
           </p>
           <div class="hero-actions">
-            <button id="jump-upload" type="button">Upload scans</button>
-            <button id="jump-viewer" class="secondary" type="button">Open viewer</button>
+            <button id="jump-upload" type="button">Import studies</button>
+            <button id="jump-viewer" class="secondary" type="button">Open PACS</button>
           </div>
         </div>
         <div id="integration-strip" class="integration-strip"></div>
       </section>
 
-      <section class="workspace-grid">
-        <aside class="sidebar">
-          <section class="card">
+      <nav class="workspace-tabs" aria-label="Workspace sections">
+        <button class="workspace-tab active" type="button" data-panel="worklist">Worklist / RIS</button>
+        <button class="workspace-tab" type="button" data-panel="pacs">PACS Viewer</button>
+        <button class="workspace-tab" type="button" data-panel="reporting">Report / Dictation</button>
+      </nav>
+
+      <section id="panel-worklist" class="workspace-panel active">
+        <div class="command-grid">
+          <section id="intake-card" class="card intake-card">
             <div class="section-head">
-              <h2>Reading Worklist</h2>
-              <button id="refresh-worklist" type="button">Refresh</button>
+              <h2>Import Imaging</h2>
+              <span class="tag warm">folder, zip, or NIfTI</span>
             </div>
-            <div id="worklist-empty" class="empty-state">No studies yet.</div>
-            <table class="worklist-table">
-              <thead>
-                <tr>
-                  <th>Patient</th>
-                  <th>Accession</th>
-                  <th>Status</th>
-                  <th>Priority</th>
-                </tr>
-              </thead>
-              <tbody id="worklist-body"></tbody>
-            </table>
-          </section>
+            <div class="import-mode-grid">
+              <form id="bulk-dicom-form" class="stack-form">
+                <div>
+                  <strong>Bulk DICOM Folder</strong>
+                  <div class="muted-line">Select a local DICOM folder. Each discovered series becomes a worklist item.</div>
+                </div>
+                <div class="upload-drop folder-drop">
+                  <label>
+                    DICOM folder
+                    <input id="bulk-dicom-folder" name="dicom_files" type="file" multiple webkitdirectory directory />
+                  </label>
+                </div>
+                <div class="field-grid compact">
+                  <label>
+                    Priority
+                    <select name="priority">
+                      <option value="routine">Routine</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="stat">Stat</option>
+                    </select>
+                  </label>
+                  <label>Assignee <input name="assignee" placeholder="Radiologist" /></label>
+                  <label>Room <input name="room" placeholder="CT-1 / MR-2" /></label>
+                </div>
+                <div class="field-grid compact">
+                  <label>Ordering provider <input name="ordering_provider" placeholder="Referring physician" /></label>
+                  <label>Payer <input name="payer" placeholder="Insurance/self-pay" /></label>
+                  <label>CPT/code <input name="cpt_code" value="IMG" /></label>
+                </div>
+                <button class="primary-wide" type="submit">Bulk import DICOM folder</button>
+                <div id="bulk-dicom-status" class="status-box">No DICOM folder selected.</div>
+                <div id="bulk-dicom-results" class="stack-list"></div>
+              </form>
 
-          <section class="card">
-            <div class="section-head">
-              <h2>RIS Schedule</h2>
-              <span class="tag">modality queue</span>
-            </div>
-            <form id="schedule-form" class="stack-form mini-form">
-              <label>Patient ID <input name="patient_id" value="P001" /></label>
-              <label>Patient name <input name="patient_name" value="Casey Morgan" /></label>
-              <div class="field-grid compact">
-                <label>
-                  Modality
-                  <select name="modality">
-                    <option value="CT">CT</option>
-                    <option value="MR">MRI</option>
-                    <option value="US">Ultrasound</option>
-                    <option value="MG">Mammography</option>
-                    <option value="DX">X-ray</option>
-                  </select>
-                </label>
-                <label>Room <input name="room" placeholder="CT-1" /></label>
-                <label>Status
-                  <select name="status">
-                    <option value="scheduled">Scheduled</option>
-                    <option value="arrived">Arrived</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </label>
-              </div>
-              <label>Procedure <input name="procedure" value="CT chest with contrast" /></label>
-              <label>Scheduled for <input name="scheduled_for" type="datetime-local" /></label>
-              <label>Ordering provider <input name="ordering_provider" placeholder="Referring physician" /></label>
-              <label>Notes <textarea name="notes" rows="2"></textarea></label>
-              <button type="submit">Add appointment</button>
-            </form>
-            <div id="schedule-list" class="stack-list"></div>
-          </section>
-
-          <section class="card">
-            <h2>Model Catalog</h2>
-            <div id="model-catalog" class="stack-list"></div>
-          </section>
-        </aside>
-
-        <section class="content">
-          <div class="two-up">
-            <section id="intake-card" class="card intake-card">
-              <div class="section-head">
-                <h2>Upload Scans</h2>
-                <span class="tag warm">DICOM zip or NIfTI</span>
-              </div>
               <form id="upload-form" class="stack-form">
+                <div>
+                  <strong>Single Study Upload</strong>
+                  <div class="muted-line">Use this for NIfTI, DICOM zip, or a primary/comparison pair.</div>
+                </div>
                 <div class="field-grid">
                   <label>Patient ID <input name="patient_id" value="P001" /></label>
                   <label>Patient name <input name="patient_name" value="Casey Morgan" /></label>
@@ -132,175 +110,253 @@
                 <label>Indication <textarea name="indication" rows="3" placeholder="Clinical question, symptoms, history, comparison context..."></textarea></label>
                 <div class="upload-drop">
                   <label>Primary image/series <input name="baseline_scan" type="file" accept=".nii,.gz,.zip" required /></label>
-                  <label>Comparison or follow-up image/series <input name="followup_scan" type="file" accept=".nii,.gz,.zip" /></label>
+                  <label>Comparison image/series <input name="followup_scan" type="file" accept=".nii,.gz,.zip" /></label>
                 </div>
-                <button class="primary-wide" type="submit">Upload scans and create PACS/RIS workspace</button>
+                <button class="primary-wide" type="submit">Create single-study workspace</button>
+                <div id="study-status" class="status-box">Waiting for scan upload.</div>
               </form>
-              <div id="study-status" class="status-box">Waiting for scan upload.</div>
-            </section>
-
-            <section class="card">
-              <h2>Workspace Context</h2>
-              <div id="study-summary" class="summary-panel">Select or create a study to start reading.</div>
-              <div class="field-grid compact">
-                <label>
-                  Worklist status
-                  <select id="worklist-status">
-                    <option value="new">New</option>
-                    <option value="ready_to_read">Ready to read</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="awaiting_ai_review">Awaiting AI review</option>
-                    <option value="signed">Signed</option>
-                  </select>
-                </label>
-                <label>
-                  Priority
-                  <select id="worklist-priority">
-                    <option value="routine">Routine</option>
-                    <option value="urgent">Urgent</option>
-                    <option value="stat">Stat</option>
-                  </select>
-                </label>
-                <label>Assignee <input id="worklist-assignee" placeholder="Reader" /></label>
-              </div>
-              <button id="save-worklist" type="button" disabled>Save workflow state</button>
-              <div id="launch-links" class="stack-list muted-list"></div>
-
-              <div class="divider"></div>
-              <h2>Billing</h2>
-              <form id="billing-form" class="stack-form mini-form">
-                <div class="field-grid compact">
-                  <label>Patient ID <input name="patient_id" value="P001" /></label>
-                  <label>Accession <input name="accession_number" placeholder="ACC..." /></label>
-                  <label>CPT/code <input name="cpt_code" value="IMG" /></label>
-                </div>
-                <label>Description <input name="description" value="Imaging interpretation" /></label>
-                <div class="field-grid compact">
-                  <label>Payer <input name="payer" placeholder="Insurance/self-pay" /></label>
-                  <label>Amount cents <input name="amount_cents" type="number" min="0" value="0" /></label>
-                  <label>Status
-                    <select name="status">
-                      <option value="draft">Draft</option>
-                      <option value="coded">Coded</option>
-                      <option value="submitted">Submitted</option>
-                      <option value="paid">Paid</option>
-                      <option value="denied">Denied</option>
-                    </select>
-                  </label>
-                </div>
-                <button type="submit">Create charge</button>
-              </form>
-              <div id="billing-list" class="stack-list"></div>
-            </section>
-          </div>
-
-          <section id="viewer-card" class="card viewer-shell">
-            <div class="section-head">
-              <h2>PACS Viewer</h2>
-              <div class="inline-actions">
-                <label>Plane
-                  <select id="viewer-plane">
-                    <option value="axial">Axial</option>
-                    <option value="coronal">Coronal MPR</option>
-                    <option value="sagittal">Sagittal MPR</option>
-                  </select>
-                </label>
-                <label>Preset
-                  <select id="viewer-preset">
-                    <option value="ct-soft">CT soft tissue</option>
-                    <option value="ct-lung">CT lung</option>
-                    <option value="ct-bone">CT bone</option>
-                    <option value="mr">MRI</option>
-                    <option value="xray">X-ray</option>
-                    <option value="mammo">Mammography</option>
-                    <option value="us">Ultrasound</option>
-                  </select>
-                </label>
-                <label>Tool
-                  <select id="viewer-tool">
-                    <option value="pan">Pan/window</option>
-                    <option value="measure">Measure</option>
-                    <option value="segment">Segment brush</option>
-                  </select>
-                </label>
-              </div>
             </div>
-            <div class="viewer-toolbar">
-              <label>Window center <input id="window-center" type="number" value="50" /></label>
-              <label>Window width <input id="window-width" type="number" min="1" value="500" /></label>
-              <label>Zoom <input id="viewer-zoom" type="range" min="1" max="4" step="0.1" value="1" /></label>
-              <label>Brush <input id="brush-size" type="range" min="2" max="40" value="12" /></label>
-              <label class="checkbox-row"><input id="viewer-invert" type="checkbox" /> Invert</label>
-              <button id="apply-window" type="button" disabled>Apply window</button>
-              <button id="save-baseline-slice" type="button" disabled>Save primary mask</button>
-              <button id="save-followup-slice" type="button" disabled>Save comparison mask</button>
-            </div>
-            <div id="measurement-status" class="status-box">Measurements appear here after you use the Measure tool.</div>
-            <div class="viewer-grid">
-              <div class="viewer-card">
-                <div class="section-head">
-                  <h3>Primary</h3>
-                  <span id="baseline-slice-label" class="tag">slice 0</span>
-                </div>
-                <input id="baseline-slice" type="range" min="0" max="0" value="0" disabled />
-                <canvas id="baseline-view" width="512" height="512"></canvas>
-              </div>
-              <div class="viewer-card">
-                <div class="section-head">
-                  <h3>Comparison</h3>
-                  <span id="followup-slice-label" class="tag">slice 0</span>
-                </div>
-                <input id="followup-slice" type="range" min="0" max="0" value="0" disabled />
-                <canvas id="followup-view" width="512" height="512"></canvas>
-              </div>
-            </div>
-            <div id="measurement-list" class="stack-list"></div>
           </section>
 
-          <div class="two-up">
-            <section class="card report-card">
-              <div class="section-head">
-                <h2>Report Word Processor</h2>
-                <div class="inline-actions">
-                  <select id="report-status">
-                    <option value="draft">Draft</option>
-                    <option value="final">Final</option>
-                  </select>
-                  <input id="report-signed-by" placeholder="Signing radiologist" />
-                  <button id="save-report" type="button" disabled>Save report</button>
-                </div>
-              </div>
-              <label>Indication <textarea id="report-indication" rows="3"></textarea></label>
-              <div class="editor-toolbar" aria-label="Report formatting toolbar">
-                <button type="button" data-command="bold">B</button>
-                <button type="button" data-command="italic">I</button>
-                <button type="button" data-command="underline">U</button>
-                <button type="button" data-command="insertUnorderedList">Bullets</button>
-                <button type="button" data-command="insertOrderedList">Numbered</button>
-                <button type="button" id="insert-measurement">Insert measurement</button>
-              </div>
-              <label>Findings <div id="report-findings" class="rich-editor" contenteditable="true" role="textbox"></div></label>
-              <label>Impression <div id="report-impression" class="rich-editor compact-editor" contenteditable="true" role="textbox"></div></label>
-              <div class="dictation-panel">
-                <div class="section-head">
-                  <div>
-                    <strong>Open-source dictation</strong>
-                    <div id="speech-status" class="muted-line">Checking speech engine...</div>
-                  </div>
-                  <div class="inline-actions">
-                    <select id="dictation-target">
-                      <option value="findings">Findings</option>
-                      <option value="impression">Impression</option>
-                    </select>
-                    <button id="start-dictation" type="button">Start dictation</button>
-                    <button id="stop-dictation" type="button" disabled>Stop and transcribe</button>
-                  </div>
-                </div>
-                <div id="dictation-status" class="status-box">Dictation is idle.</div>
-              </div>
-              <div id="report-status-note" class="status-box">No report loaded.</div>
-            </section>
+          <section class="card">
+            <div class="section-head">
+              <h2>Reading Worklist</h2>
+              <button id="refresh-worklist" type="button">Refresh</button>
+            </div>
+            <div id="worklist-empty" class="empty-state">No studies yet.</div>
+            <table class="worklist-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Accession</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                </tr>
+              </thead>
+              <tbody id="worklist-body"></tbody>
+            </table>
+          </section>
+        </div>
 
+        <div class="two-up">
+          <section class="card">
+            <div class="section-head">
+              <h2>RIS Schedule</h2>
+              <span class="tag">modality queue</span>
+            </div>
+            <form id="schedule-form" class="stack-form mini-form">
+              <div class="field-grid compact">
+                <label>Patient ID <input name="patient_id" value="P001" /></label>
+                <label>Patient name <input name="patient_name" value="Casey Morgan" /></label>
+                <label>
+                  Modality
+                  <select name="modality">
+                    <option value="CT">CT</option>
+                    <option value="MR">MRI</option>
+                    <option value="US">Ultrasound</option>
+                    <option value="MG">Mammography</option>
+                    <option value="DX">X-ray</option>
+                  </select>
+                </label>
+              </div>
+              <div class="field-grid compact">
+                <label>Room <input name="room" placeholder="CT-1" /></label>
+                <label>Scheduled for <input name="scheduled_for" type="datetime-local" /></label>
+                <label>Status
+                  <select name="status">
+                    <option value="scheduled">Scheduled</option>
+                    <option value="arrived">Arrived</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </label>
+              </div>
+              <label>Procedure <input name="procedure" value="CT chest with contrast" /></label>
+              <label>Ordering provider <input name="ordering_provider" placeholder="Referring physician" /></label>
+              <label>Notes <textarea name="notes" rows="2"></textarea></label>
+              <button type="submit">Add appointment</button>
+            </form>
+            <div id="schedule-list" class="stack-list"></div>
+          </section>
+
+          <section class="card">
+            <h2>Billing</h2>
+            <form id="billing-form" class="stack-form mini-form">
+              <div class="field-grid compact">
+                <label>Patient ID <input name="patient_id" value="P001" /></label>
+                <label>Accession <input name="accession_number" placeholder="ACC..." /></label>
+                <label>CPT/code <input name="cpt_code" value="IMG" /></label>
+              </div>
+              <label>Description <input name="description" value="Imaging interpretation" /></label>
+              <div class="field-grid compact">
+                <label>Payer <input name="payer" placeholder="Insurance/self-pay" /></label>
+                <label>Amount cents <input name="amount_cents" type="number" min="0" value="0" /></label>
+                <label>Status
+                  <select name="status">
+                    <option value="draft">Draft</option>
+                    <option value="coded">Coded</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="paid">Paid</option>
+                    <option value="denied">Denied</option>
+                  </select>
+                </label>
+              </div>
+              <button type="submit">Create charge</button>
+            </form>
+            <div id="billing-list" class="stack-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="panel-pacs" class="workspace-panel">
+        <div class="two-up">
+          <section class="card">
+            <h2>Study Context</h2>
+            <div id="study-summary" class="summary-panel">Select or create a study to start reading.</div>
+            <div class="field-grid compact">
+              <label>
+                Worklist status
+                <select id="worklist-status">
+                  <option value="new">New</option>
+                  <option value="ready_to_read">Ready to read</option>
+                  <option value="in_progress">In progress</option>
+                  <option value="awaiting_ai_review">Awaiting AI review</option>
+                  <option value="signed">Signed</option>
+                </select>
+              </label>
+              <label>
+                Priority
+                <select id="worklist-priority">
+                  <option value="routine">Routine</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="stat">Stat</option>
+                </select>
+              </label>
+              <label>Assignee <input id="worklist-assignee" placeholder="Reader" /></label>
+            </div>
+            <button id="save-worklist" type="button" disabled>Save workflow state</button>
+            <div id="launch-links" class="stack-list muted-list"></div>
+          </section>
+
+          <section class="card">
+            <h2>DICOM Metadata</h2>
+            <div id="metadata-panel" class="metadata-grid">
+              <div class="empty-state" style="display:block">No DICOM metadata loaded yet.</div>
+            </div>
+          </section>
+        </div>
+
+        <section id="viewer-card" class="card viewer-shell">
+          <div class="section-head">
+            <h2>PACS Viewer</h2>
+            <div class="inline-actions">
+              <label>Plane
+                <select id="viewer-plane">
+                  <option value="axial">Axial</option>
+                  <option value="coronal">Coronal MPR</option>
+                  <option value="sagittal">Sagittal MPR</option>
+                </select>
+              </label>
+              <label>Preset
+                <select id="viewer-preset">
+                  <option value="ct-soft">CT soft tissue</option>
+                  <option value="ct-lung">CT lung</option>
+                  <option value="ct-bone">CT bone</option>
+                  <option value="mr">MRI</option>
+                  <option value="xray">X-ray</option>
+                  <option value="mammo">Mammography</option>
+                  <option value="us">Ultrasound</option>
+                </select>
+              </label>
+              <label>Tool
+                <select id="viewer-tool">
+                  <option value="pan">Pan/window</option>
+                  <option value="measure">Measure</option>
+                  <option value="segment">Segment brush</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="viewer-toolbar">
+            <label>Window center <input id="window-center" type="number" value="50" /></label>
+            <label>Window width <input id="window-width" type="number" min="1" value="500" /></label>
+            <label>Zoom <input id="viewer-zoom" type="range" min="1" max="4" step="0.1" value="1" /></label>
+            <label>Brush <input id="brush-size" type="range" min="2" max="40" value="12" /></label>
+            <label class="checkbox-row"><input id="viewer-invert" type="checkbox" /> Invert</label>
+            <button id="apply-window" type="button" disabled>Apply window</button>
+            <button id="save-baseline-slice" type="button" disabled>Save primary mask</button>
+            <button id="save-followup-slice" type="button" disabled>Save comparison mask</button>
+          </div>
+          <div id="measurement-status" class="status-box">Measurements appear here after you use the Measure tool.</div>
+          <div class="viewer-grid">
+            <div class="viewer-card">
+              <div class="section-head">
+                <h3>Primary</h3>
+                <span id="baseline-slice-label" class="tag">slice 0</span>
+              </div>
+              <input id="baseline-slice" type="range" min="0" max="0" value="0" disabled />
+              <canvas id="baseline-view" width="512" height="512"></canvas>
+            </div>
+            <div class="viewer-card">
+              <div class="section-head">
+                <h3>Comparison</h3>
+                <span id="followup-slice-label" class="tag">slice 0</span>
+              </div>
+              <input id="followup-slice" type="range" min="0" max="0" value="0" disabled />
+              <canvas id="followup-view" width="512" height="512"></canvas>
+            </div>
+          </div>
+          <div id="measurement-list" class="stack-list"></div>
+        </section>
+      </section>
+
+      <section id="panel-reporting" class="workspace-panel">
+        <div class="two-up reporting-layout">
+          <section class="card report-card">
+            <div class="section-head">
+              <h2>Report Word Processor</h2>
+              <div class="inline-actions">
+                <select id="report-status">
+                  <option value="draft">Draft</option>
+                  <option value="final">Final</option>
+                </select>
+                <input id="report-signed-by" placeholder="Signing radiologist" />
+                <button id="save-report" type="button" disabled>Save report</button>
+              </div>
+            </div>
+            <label>Indication <textarea id="report-indication" rows="3"></textarea></label>
+            <div class="editor-toolbar" aria-label="Report formatting toolbar">
+              <button type="button" data-command="bold">B</button>
+              <button type="button" data-command="italic">I</button>
+              <button type="button" data-command="underline">U</button>
+              <button type="button" data-command="insertUnorderedList">Bullets</button>
+              <button type="button" data-command="insertOrderedList">Numbered</button>
+              <button type="button" id="insert-measurement">Insert measurement</button>
+            </div>
+            <label>Findings <div id="report-findings" class="rich-editor" contenteditable="true" role="textbox"></div></label>
+            <label>Impression <div id="report-impression" class="rich-editor compact-editor" contenteditable="true" role="textbox"></div></label>
+            <div class="dictation-panel">
+              <div class="section-head">
+                <div>
+                  <strong>Speech-to-text dictation</strong>
+                  <div id="speech-status" class="muted-line">Checking speech engine...</div>
+                </div>
+                <div class="inline-actions">
+                  <select id="dictation-target">
+                    <option value="findings">Findings</option>
+                    <option value="impression">Impression</option>
+                  </select>
+                  <button id="start-dictation" type="button">Start dictation</button>
+                  <button id="stop-dictation" type="button" disabled>Stop and transcribe</button>
+                </div>
+              </div>
+              <div id="dictation-status" class="status-box">Dictation is idle.</div>
+            </div>
+            <div id="report-status-note" class="status-box">No report loaded.</div>
+          </section>
+
+          <section class="side-stack">
             <section class="card">
               <h2>AI Actions</h2>
               <div class="field-grid compact">
@@ -329,8 +385,14 @@
               </div>
               <div id="task-status" class="status-box">No AI task has run yet.</div>
               <div id="ai-tasks" class="stack-list"></div>
+            </section>
 
-              <div class="divider"></div>
+            <section class="card">
+              <h2>Model Catalog</h2>
+              <div id="model-catalog" class="stack-list"></div>
+            </section>
+
+            <section class="card">
               <h2>Fine-Tune Queue</h2>
               <form id="training-form" class="stack-form">
                 <label>Base model <input name="base_model_id" value="tenant-finetune-slot" /></label>
@@ -342,8 +404,8 @@
               </form>
               <div id="training-runs" class="stack-list"></div>
             </section>
-          </div>
-        </section>
+          </section>
+        </div>
       </section>
     </main>
 

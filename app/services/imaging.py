@@ -6,21 +6,79 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
 from PIL import Image
 
 
-def _read_dicom_series_from_dir(root: Path) -> sitk.Image:
+COMMON_DICOM_TAGS = {
+    "0008|0020": "study_date",
+    "0008|0030": "study_time",
+    "0008|0050": "accession_number",
+    "0008|0060": "modality",
+    "0008|1030": "study_description",
+    "0008|103e": "series_description",
+    "0010|0010": "patient_name",
+    "0010|0020": "patient_id",
+    "0018|0015": "body_part",
+    "0020|000d": "study_instance_uid",
+    "0020|000e": "series_instance_uid",
+    "0020|0011": "series_number",
+}
+
+
+def _flatten_dicom_directory(root: Path, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for index, src in enumerate(path for path in root.rglob("*") if path.is_file()):
+        suffix = src.suffix if len(src.suffix) <= 12 else ""
+        shutil.copyfile(src, output_dir / f"dicom_{index:06d}{suffix}")
+
+
+def _series_ids_from_dir(root: Path) -> List[str]:
+    ids = sitk.ImageSeriesReader.GetGDCMSeriesIDs(str(root))
+    return list(ids or [])
+
+
+def _read_dicom_metadata(file_path: Path) -> Dict[str, str]:
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(str(file_path))
+    reader.LoadPrivateTagsOff()
+    reader.ReadImageInformation()
+    metadata: Dict[str, str] = {}
+    for tag, name in COMMON_DICOM_TAGS.items():
+        if reader.HasMetaDataKey(tag):
+            metadata[name] = reader.GetMetaData(tag).strip()
+    return metadata
+
+
+def discover_dicom_series(root: Path) -> List[Dict[str, object]]:
+    series_ids = _series_ids_from_dir(root)
+    if not series_ids:
+        return []
+
+    discovered: List[Dict[str, object]] = []
+    for series_id in series_ids:
+        file_names = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(str(root), series_id)
+        metadata = _read_dicom_metadata(Path(file_names[0])) if file_names else {}
+        metadata["series_instance_uid"] = metadata.get("series_instance_uid") or series_id
+        metadata["series_id"] = series_id
+        metadata["instance_count"] = len(file_names)
+        metadata["source_files"] = [Path(name).name for name in file_names[:6]]
+        discovered.append(metadata)
+    return discovered
+
+
+def read_dicom_series_from_dir(root: Path, series_id: Optional[str] = None) -> sitk.Image:
     reader = sitk.ImageSeriesReader()
-    series_ids = reader.GetGDCMSeriesIDs(str(root))
+    series_ids = _series_ids_from_dir(root)
     if not series_ids:
         raise ValueError("No DICOM series found in archive")
-    file_names = reader.GetGDCMSeriesFileNames(str(root), series_ids[0])
+    target_series = series_id if series_id in series_ids else series_ids[0]
+    file_names = reader.GetGDCMSeriesFileNames(str(root), target_series)
     reader.SetFileNames(file_names)
-    return reader.Execute()
+    return ensure_3d_image(reader.Execute())
 
 
 def ensure_3d_image(image: sitk.Image) -> sitk.Image:
@@ -43,7 +101,12 @@ def load_scan_from_file(upload_path: Path) -> sitk.Image:
             tdir = Path(td)
             with zipfile.ZipFile(upload_path, "r") as zf:
                 zf.extractall(tdir)
-            return ensure_3d_image(_read_dicom_series_from_dir(tdir))
+            if discover_dicom_series(tdir):
+                return ensure_3d_image(read_dicom_series_from_dir(tdir))
+            with tempfile.TemporaryDirectory() as flat_td:
+                flat_dir = Path(flat_td)
+                _flatten_dicom_directory(tdir, flat_dir)
+                return ensure_3d_image(read_dicom_series_from_dir(flat_dir))
 
     if suffixes[-2:] == [".nii", ".gz"] or upload_path.suffix == ".nii":
         return ensure_3d_image(sitk.ReadImage(str(upload_path)))
