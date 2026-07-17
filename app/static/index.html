@@ -73,7 +73,7 @@
               <form id="upload-form" class="stack-form">
                 <div>
                   <strong>Single Study Upload</strong>
-                  <div class="muted-line">Use this for NIfTI, DICOM zip, or a primary/comparison pair.</div>
+                  <div class="muted-line">Use this for NIfTI, DICOM zip, or an optional comparison series.</div>
                 </div>
                 <div class="field-grid">
                   <label>Patient ID <input name="patient_id" value="P001" /></label>
@@ -110,7 +110,7 @@
                 <label>Indication <textarea name="indication" rows="3" placeholder="Clinical question, symptoms, history, comparison context..."></textarea></label>
                 <div class="upload-drop">
                   <label>Primary image/series <input name="baseline_scan" type="file" accept=".nii,.gz,.zip" required /></label>
-                  <label>Comparison image/series <input name="followup_scan" type="file" accept=".nii,.gz,.zip" /></label>
+                  <label>Optional comparison series <input name="followup_scan" type="file" accept=".nii,.gz,.zip" /></label>
                 </div>
                 <button class="primary-wide" type="submit">Create single-study workspace</button>
                 <div id="study-status" class="status-box">Waiting for scan upload.</div>

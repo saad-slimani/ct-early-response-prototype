@@ -1,5 +1,7 @@
 __pycache__/
+.DS_Store
 .venv/
 .dist/
+data/workflow.db
 data/studies/
 data/models/

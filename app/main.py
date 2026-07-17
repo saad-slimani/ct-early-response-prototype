@@ -224,7 +224,12 @@ def _run_segmentation_task(
     try:
         outputs: Dict[str, Any] = {}
         artifacts: List[Dict[str, Any]] = []
-        for tp, seed in (("baseline", req.baseline_seed), ("followup", req.followup_seed)):
+        labels = {"baseline": "Primary", "followup": "Comparison"}
+        meta = _study_meta_or_empty(study_id)
+        requested_timepoints = [("baseline", req.baseline_seed)]
+        if meta.get("comparison_uploaded", True):
+            requested_timepoints.append(("followup", req.followup_seed))
+        for tp, seed in requested_timepoints:
             seed_obj = SeedPoint(z=seed.z, y=seed.y, x=seed.x) if seed else None
             model_name, out_path = segmenter.run(
                 store.image_path(study_id, tp),
@@ -235,7 +240,7 @@ def _run_segmentation_task(
             artifacts.append(
                 {
                     "artifact_type": "segmentation-mask",
-                    "label": f"{tp.title()} mask",
+                    "label": f"{labels[tp]} mask",
                     "storage_ref": str(out_path),
                     "provenance": {
                         "timepoint": tp,
@@ -247,7 +252,11 @@ def _run_segmentation_task(
         completed = workflow.complete_ai_task(
             db,
             task,
-            output_summary="Generated baseline and follow-up segmentation masks.",
+            output_summary=(
+                "Generated primary and comparison segmentation masks."
+                if meta.get("comparison_uploaded", True)
+                else "Generated primary segmentation mask."
+            ),
             result_payload=outputs,
             artifacts=artifacts,
         )
@@ -267,6 +276,9 @@ def _run_early_response_task(
 ) -> Dict[str, Any]:
     task = workflow.create_ai_task(db, study_id, task_type="early_response", model_id=model_id, prompt=prompt, status="running")
     try:
+        meta = _study_meta_or_empty(study_id)
+        if not meta.get("comparison_uploaded", True):
+            raise ValueError("Early response scoring requires a comparison series.")
         features = radiomics.extract_features(
             store.image_path(study_id, "baseline"),
             store.image_path(study_id, "followup"),
@@ -327,20 +339,21 @@ def _run_report_draft_task(
         followup = meta.get("followup") or {}
         if report.indication:
             findings_lines.append(f"Indication: {report.indication.strip()}")
+        modality = str(meta.get("modality") or "imaging").upper()
         if baseline:
             findings_lines.append(
-                f"Baseline CT available with shape {baseline.get('shape_zyx')} and spacing {baseline.get('spacing_xyz')}."
+                f"Primary {modality} series available with shape {baseline.get('shape_zyx')} and spacing {baseline.get('spacing_xyz')}."
             )
-        if followup:
+        if followup and meta.get("comparison_uploaded", True):
             findings_lines.append(
-                f"Follow-up CT available with shape {followup.get('shape_zyx')} and spacing {followup.get('spacing_xyz')}."
+                f"Comparison {modality} series available with shape {followup.get('shape_zyx')} and spacing {followup.get('spacing_xyz')}."
             )
         if score_artifact and score_artifact.report_snippet:
             findings_lines.append(score_artifact.report_snippet)
         if prompt:
             findings_lines.append(f"Requested focus: {prompt.strip()}")
 
-        findings = "\n".join(findings_lines) or "Baseline and follow-up CT are available for review."
+        findings = "\n".join(findings_lines) or "Primary imaging series is available for review."
         impression = "AI-assisted draft generated from image metadata and available derived artifacts. Review before final sign-off."
         if score_artifact and score_artifact.report_snippet:
             impression = f"{score_artifact.report_snippet} Clinical correlation and physician review required."

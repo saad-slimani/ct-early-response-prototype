@@ -8,6 +8,29 @@ const WINDOW_PRESETS = {
   us: { center: "", width: "" },
 };
 
+const SERIES = {
+  baseline: {
+    label: "Primary",
+    role: "primary",
+    slice: "baselineSlice",
+    sliceLabel: "baselineSliceLabel",
+    canvas: "baselineView",
+    card: "baselineViewerCard",
+    save: "saveBaseline",
+  },
+  followup: {
+    label: "Comparison",
+    role: "comparison",
+    slice: "followupSlice",
+    sliceLabel: "followupSliceLabel",
+    canvas: "followupView",
+    card: "followupViewerCard",
+    save: "saveFollowup",
+  },
+};
+
+const SERIES_KEYS = Object.keys(SERIES);
+
 const state = {
   currentStudyId: new URLSearchParams(window.location.search).get("study_id"),
   workspace: null,
@@ -41,6 +64,16 @@ const state = {
   dictation: { recorder: null, chunks: [], stream: null, recognition: null, mode: null, transcript: "" },
   activeEditor: null,
 };
+
+function seriesLabel(timepoint) {
+  return SERIES[timepoint]?.label || timepoint;
+}
+
+function resetSeriesSlices() {
+  SERIES_KEYS.forEach((timepoint) => {
+    state.views[timepoint].slice = 0;
+  });
+}
 
 const el = {
   navTabs: Array.from(document.querySelectorAll(".workspace-tab")),
@@ -217,7 +250,7 @@ function comparisonAvailable() {
 
 function visibleTimepoints() {
   if (state.viewer.layout === "compare" && comparisonAvailable()) {
-    return ["baseline", "followup"];
+    return SERIES_KEYS;
   }
   return [state.viewer.activeSeries];
 }
@@ -237,13 +270,15 @@ function applyViewerLayout() {
 
   const showBaseline = state.viewer.layout === "compare" || state.viewer.activeSeries === "baseline";
   const showFollowup = canCompare && (state.viewer.layout === "compare" || state.viewer.activeSeries === "followup");
-  el.baselineViewerCard.hidden = !showBaseline;
-  el.followupViewerCard.hidden = !showFollowup;
-  el.baselineViewerCard.classList.toggle("active-series-card", state.viewer.activeSeries === "baseline");
-  el.followupViewerCard.classList.toggle("active-series-card", state.viewer.activeSeries === "followup");
+  el[SERIES.baseline.card].hidden = !showBaseline;
+  el[SERIES.followup.card].hidden = !showFollowup;
+  SERIES_KEYS.forEach((key) => {
+    el[SERIES[key].card].classList.toggle("active-series-card", state.viewer.activeSeries === key);
+  });
   document.getElementById("viewer-card").classList.toggle("single-viewer", state.viewer.layout === "single");
-  el.saveBaseline.disabled = !state.currentStudyId || (state.viewer.layout === "single" && state.viewer.activeSeries !== "baseline");
-  el.saveFollowup.disabled = !state.currentStudyId || !canCompare || (state.viewer.layout === "single" && state.viewer.activeSeries !== "followup");
+  el[SERIES.baseline.save].disabled = !state.currentStudyId || (state.viewer.layout === "single" && state.viewer.activeSeries !== "baseline");
+  el[SERIES.followup.save].disabled = !state.currentStudyId || !canCompare || (state.viewer.layout === "single" && state.viewer.activeSeries !== "followup");
+  el.quickScore.disabled = !state.currentStudyId || !canCompare;
 }
 
 function renderIntegrations() {
@@ -543,7 +578,7 @@ function renderMeasurements() {
             <strong>${escapeHtml(m.label)}</strong>
             <span class="tag">${Number(m.value_mm || 0).toFixed(1)} mm</span>
           </div>
-          <div class="muted-line">${escapeHtml(m.timepoint)} | ${escapeHtml(m.plane)} | slice ${m.slice_index + 1}</div>
+          <div class="muted-line">${escapeHtml(seriesLabel(m.timepoint))} | ${escapeHtml(m.plane)} | slice ${m.slice_index + 1}</div>
         </div>
       `
     )
@@ -685,8 +720,8 @@ async function refreshSlice(timepoint) {
   view.shape = data.shape_hw || [512, 512];
   view.spacing = data.pixel_spacing_mm || [1, 1];
 
-  const slider = timepoint === "baseline" ? el.baselineSlice : el.followupSlice;
-  const label = timepoint === "baseline" ? el.baselineSliceLabel : el.followupSliceLabel;
+  const slider = el[SERIES[timepoint].slice];
+  const label = el[SERIES[timepoint].sliceLabel];
   slider.max = String(Math.max(0, view.max - 1));
   slider.value = String(view.slice);
   slider.disabled = view.max <= 1;
@@ -733,7 +768,7 @@ async function saveMeasurement(timepoint, startCanvas, endCanvas) {
     plane: state.viewer.plane,
     slice_index: state.views[timepoint].slice,
     measurement_type: "length",
-    label: `${timepoint} ${state.viewer.plane} length`,
+    label: `${seriesLabel(timepoint)} ${state.viewer.plane} length`,
     points: [start, end],
     value_mm: value,
   };
@@ -858,7 +893,8 @@ async function saveMaskSlice(timepoint) {
 }
 
 function applyZoom() {
-  [el.baselineView, el.followupView].forEach((canvas) => {
+  SERIES_KEYS.forEach((timepoint) => {
+    const canvas = el[SERIES[timepoint].canvas];
     canvas.style.transform = `scale(${state.viewer.zoom})`;
   });
 }
@@ -880,7 +916,7 @@ function playCine() {
   state.viewer.cineTimer = window.setInterval(async () => {
     const view = state.views[timepoint];
     view.slice = view.max <= 1 ? 0 : (view.slice + 1) % view.max;
-    const slider = timepoint === "baseline" ? el.baselineSlice : el.followupSlice;
+    const slider = el[SERIES[timepoint].slice];
     slider.value = String(view.slice);
     try {
       await refreshSlice(timepoint);
@@ -891,7 +927,7 @@ function playCine() {
   }, Math.round(1000 / fps));
   el.playCine.disabled = true;
   el.stopCine.disabled = false;
-  setStatus(el.measurementStatus, `Cine running on ${timepoint === "baseline" ? "primary" : "comparison"} at ${fps} fps.`);
+  setStatus(el.measurementStatus, `Cine running on ${seriesLabel(timepoint).toLowerCase()} at ${fps} fps.`);
 }
 
 async function resetViewer() {
@@ -902,8 +938,7 @@ async function resetViewer() {
   state.viewer.invert = false;
   state.viewer.zoom = 1;
   state.viewer.tool = "pan";
-  state.views.baseline.slice = 0;
-  state.views.followup.slice = 0;
+  resetSeriesSlices();
   el.viewerPlane.value = "axial";
   el.windowCenter.value = "50";
   el.windowWidth.value = "500";
@@ -969,8 +1004,7 @@ async function loadWorkspace(studyId) {
   state.currentStudyId = studyId;
   renderWorkspace();
   if (data.study?.file_meta?.baseline) {
-    state.views.baseline.slice = 0;
-    state.views.followup.slice = 0;
+    resetSeriesSlices();
     applyViewerLayout();
     await refreshViewer();
   }
@@ -1247,8 +1281,7 @@ el.activeSeries.addEventListener("change", async () => {
 el.viewerPlane.addEventListener("change", async () => {
   stopCine();
   state.viewer.plane = el.viewerPlane.value;
-  state.views.baseline.slice = 0;
-  state.views.followup.slice = 0;
+  resetSeriesSlices();
   await refreshViewer();
 });
 
@@ -1258,7 +1291,7 @@ el.viewerTool.addEventListener("change", () => {
     state.viewer.tool === "measure"
       ? "Measure tool active. Click and drag on either image."
       : state.viewer.tool === "segment"
-        ? "Segment brush active. Axial mask edits can be saved."
+        ? "Segment brush active. Axial mask edits can be saved for the active series."
         : "Review mode active. Use presets, window values, zoom, and slice controls.";
   setStatus(el.measurementStatus, message);
 });
