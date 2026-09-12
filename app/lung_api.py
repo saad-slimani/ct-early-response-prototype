@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import threading
@@ -568,7 +569,7 @@ def execute_job(job_id, directory, slot, lock_fd):
                                         "app.services.medsam_worker" if lite else "app.services.lung_worker",
                                         str(directory / "request.json")], cwd=str(Path(__file__).resolve().parents[1]),
                                        stdout=log, stderr=log, pass_fds=(lock_fd,),
-                                       env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                                       env={**os.environ, "PYTHONUNBUFFERED": "1", "MALLOC_ARENA_MAX": "2", "MALLOC_TRIM_THRESHOLD_": "131072"})
             with _process_lock:
                 _processes.add(process)
             start = time.monotonic()
@@ -617,6 +618,8 @@ def execute_job(job_id, directory, slot, lock_fd):
                     process.wait()
             with _process_lock:
                 _processes.discard(process)
+        for temporary in directory.glob("medsam-embeddings-*"):
+            shutil.rmtree(temporary, ignore_errors=True)
         slot.__exit__(None, None, None)
         _runner_lock.release()
 

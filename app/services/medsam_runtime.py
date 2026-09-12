@@ -1,11 +1,14 @@
 """Verified LiteMedSAM ONNX inference; no PyTorch in the web deployment."""
 
 from functools import lru_cache
+import gc
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
+import tempfile
 
 import numpy as np
 
@@ -85,7 +88,16 @@ def prepare_slice(pixels, bounds):
     return tensor, (new_height, new_width), scale
 
 
-def infer_volume(volume, frame, box, radius, modality, level, width, progress=None, bounds=None):
+def release_buffers():
+    gc.collect()
+    if sys.platform.startswith("linux"):
+        import ctypes
+        trim = getattr(ctypes.CDLL(None), "malloc_trim", None)
+        if trim:
+            trim(0)
+
+
+def infer_volume(volume, frame, box, radius, modality, level, width, progress=None, bounds=None, work_dir=None):
     import cv2
     import onnxruntime as ort
     manifest = verify_model()
@@ -94,23 +106,39 @@ def infer_volume(volume, frame, box, radius, modality, level, width, progress=No
     options.inter_op_num_threads = 1
     options.enable_cpu_mem_arena = False
     options.enable_mem_pattern = False
-    sessions = [ort.InferenceSession(str(model_directory() / name), sess_options=options,
-                                    providers=["CPUExecutionProvider"]) for name in MODEL_FILES]
-    encoder, decoder = sessions
     start, stop = max(0, frame - radius), min(volume.shape[0], frame + radius + 1)
     bounds = bounds or intensity_bounds(volume, modality, level, width)
     prediction = np.zeros(volume.shape, dtype=np.uint8)
-    for index in range(start, stop):
-        tensor, new_size, scale = prepare_slice(volume[index], bounds)
-        embedding = encoder.run(["embedding"], {"image": tensor})[0]
-        logits = decoder.run(["logits"], {"embedding": embedding, "boxes": np.asarray([box], np.float32) * scale})[0][0, 0]
-        restored = cv2.resize(logits[:new_size[0], :new_size[1]], (volume.shape[2], volume.shape[1]), interpolation=cv2.INTER_LINEAR)
-        prediction[index] = restored > 0
-        if progress:
-            progress(index - start + 1, stop - start)
+    # Do not hold both model graphs and their peak activations in RAM together.
+    with tempfile.TemporaryDirectory(prefix="medsam-embeddings-", dir=work_dir) as temporary:
+        encoder = ort.InferenceSession(str(model_directory() / "encoder.onnx"), sess_options=options,
+                                       providers=["CPUExecutionProvider"])
+        for index in range(start, stop):
+            tensor, new_size, scale = prepare_slice(volume[index], bounds)
+            embedding = encoder.run(["embedding"], {"image": tensor})[0]
+            np.save(Path(temporary) / f"{index}.npy", embedding, allow_pickle=False)
+            del tensor, embedding
+            release_buffers()
+            if progress:
+                progress(index - start + 1, stop - start, "encoding")
+        del encoder
+        release_buffers()
+        decoder = ort.InferenceSession(str(model_directory() / "decoder.onnx"), sess_options=options,
+                                       providers=["CPUExecutionProvider"])
+        for index in range(start, stop):
+            embedding = np.load(Path(temporary) / f"{index}.npy", allow_pickle=False)
+            logits = decoder.run(["logits"], {"embedding": embedding, "boxes": np.asarray([box], np.float32) * scale})[0][0, 0]
+            restored = cv2.resize(logits[:new_size[0], :new_size[1]], (volume.shape[2], volume.shape[1]), interpolation=cv2.INTER_LINEAR)
+            prediction[index] = restored > 0
+            del embedding, logits, restored
+            (Path(temporary) / f"{index}.npy").unlink()
+            release_buffers()
+            if progress:
+                progress(index - start + 1, stop - start, "decoding")
     return prediction, {"model_id": manifest["id"], "source_revision": manifest["source_revision"],
         "checkpoint_sha256": manifest["checkpoint_sha256"], "onnx_sha256": MODEL_FILES,
         "onnxruntime_version": ort.__version__, "device": "cpu", "precision": "float32",
         "modality": modality, "intensity_bounds": list(bounds), "slice_range_zero_based": [start, stop - 1],
         "slices_processed": stop - start, "propagation": "Independent slice inference with a fixed user box; not a 3D tracker",
+        "execution": "Sequential encoder and decoder with disk-backed embeddings",
         "clinical_validation": False, "license_notice": manifest["license"]}

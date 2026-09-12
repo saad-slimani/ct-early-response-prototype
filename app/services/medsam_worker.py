@@ -4,6 +4,8 @@ import argparse
 import json
 import hashlib
 from pathlib import Path
+import resource
+import sys
 import time
 
 import numpy as np
@@ -20,14 +22,14 @@ def run(request_path):
     if not np.isfinite(volume).all():
         raise ValueError("Image contains nonfinite intensities")
 
-    def progress(completed, total):
+    def progress(completed, total, phase):
         partial = folder / "progress.partial.json"
-        partial.write_text(json.dumps({"completed": completed, "total": total}))
+        partial.write_text(json.dumps({"completed": completed, "total": total, "phase": phase}))
         partial.replace(folder / "progress.json")
 
     prediction, result = infer_volume(volume, request["input_frame_index"], request["box_xyxy"],
         request.get("slice_radius", 4), request["modality"], request.get("window_level", 40),
-        request.get("window_width", 400), progress, request["intensity_bounds"])
+        request.get("window_width", 400), progress, request["intensity_bounds"], folder)
     np.save(folder / "proposal.npy", prediction, allow_pickle=False)
     lo, hi = result["slice_range_zero_based"]
     result.update(elapsed_seconds=round(time.monotonic() - started, 3),
@@ -35,6 +37,7 @@ def run(request_path):
         empty_prediction=not bool(prediction.any()), prompt_plane=plane,
         box_xyxy=request["box_xyxy"], prompt_source=request.get("prompt_source", "user_drawn_box"),
         touches_crop_boundary=bool(prediction[lo].any() or prediction[hi].any()),
+        worker_peak_rss_mb=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024), 1),
         adapter_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     result["slice_range_zero_based"] = [lo + request["slice_start"], hi + request["slice_start"]]
     (folder / "result.json").write_text(json.dumps(result, indent=2))

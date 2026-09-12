@@ -260,7 +260,7 @@ async def lifespan(app):
     lung.stop_jobs()
 
 
-app = FastAPI(title="Oncometra Annotation", version="0.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Oncometra Annotation", version="0.2.1", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.dependency_overrides[annotation_db] = workspace_db
 
 
@@ -288,7 +288,7 @@ async def boundaries(request, call_next):
 
 @app.get("/healthz")
 def health():
-    return {"status": "ok", "application": "oncometra", "version": "0.2.0"}
+    return {"status": "ok", "application": "oncometra", "version": "0.2.1"}
 
 
 class Login(BaseModel):

@@ -256,6 +256,8 @@ def test_actual_medsam_jobs_are_proposals_and_undoable(clients, plane):
     assert job['result']['model_id']=='litemedsam-onnx'
     assert job['result']['slices_processed']==1
     assert job['result']['modality']=='MR'
+    assert job['progress']=={'completed':1,'total':1,'phase':'decoding'}
+    assert not list(lung.job_folder(study_id,job_id).glob('medsam-embeddings-*'))
     assert reader.get(base).json()['revision_id'] is None
     assert reader.get(base+'/mask',params={'job_id':job_id}).status_code==200
     accepted=reader.post(base+'/jobs/'+job_id+'/accept',json={'version':state['version']})

@@ -21,6 +21,10 @@ services:
         value: "true"
       - key: LUNG_MODEL_BACKEND
         value: litemedsam
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: "131072"
       - key: ONCOMETRA_ADMIN_PASSWORD
         generateValue: true
       - key: ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS

@@ -662,7 +662,7 @@ function updateControls() {
     $("accept-proposal").disabled = !ready || !flow.freshProposal || confirmed;
     $("accept-proposal").textContent = !flow.freshProposal ? "Result is outdated" : "Use result & edit";
     const result = state.job.result;
-    $("job-detail").textContent = thisRunning ? `CPU inference for N${jobNoduleLabel(state.job)}. ${state.job.progress ? `${state.job.progress.completed} / ${state.job.progress.total} slices processed.` : 'Loading model.'} You can work on other nodules.` :
+    $("job-detail").textContent = thisRunning ? `CPU inference for N${jobNoduleLabel(state.job)}. ${state.job.progress ? `${state.job.progress.completed} / ${state.job.progress.total} slices ${state.job.progress.phase === 'encoding' ? 'encoded' : 'segmented'}.` : 'Loading model.'} You can work on other nodules.` :
       status === "succeeded" ? `${result.elapsed_seconds.toFixed(0)} seconds / ${result.volume_ml.toFixed(3)} mL. ${result.touches_crop_boundary ? "WARNING: mask reaches a processed boundary; inspect and extend the range if needed. " : ""}${result.empty_prediction ? "The model returned an empty mask. " : ""}Preview replaces only N${jobNoduleLabel(state.job)}; other colors are saved nodules. Red overlap must be resolved.` : state.job.error || "No draft was changed.";
     $("model-provenance").textContent = result ? JSON.stringify(result, null, 2) : "";
   }
