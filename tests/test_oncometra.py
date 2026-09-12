@@ -23,6 +23,12 @@ from app.oncometra import app, image_directory, SessionLocal, WorkspaceCase, Wor
 from app.db import Base, engine
 
 
+@pytest.fixture(autouse=True)
+def isolated_login_limits():
+    from app.oncometra import _login_attempts
+    _login_attempts.clear()
+
+
 @pytest.fixture
 def clients():
     Base.metadata.drop_all(engine)
@@ -84,25 +90,56 @@ def test_authentication_and_csrf(clients):
     assert reader.get('/api/lung/identities',headers={'X-Annotation-Actor':'reviewer'}).json()['current']['role']=='junior_annotator'
 
 
-def test_bootstrap_account_survives_restart_without_resetting_existing_user(monkeypatch):
+@pytest.mark.parametrize('role', ['junior_annotator', 'admin'])
+def test_bootstrap_account_survives_restart_without_resetting_existing_user(monkeypatch, role):
     from app.oncometra import password_hash
 
     Base.metadata.drop_all(engine)
-    entry = {'username': 'laurent', 'name': 'Laurent', 'role': 'junior_annotator',
+    entry = {'username': 'laurent', 'name': 'Laurent', 'role': role,
              'password_hash': password_hash('test-laurent-password-1234')}
     monkeypatch.setenv('ONCOMETRA_BOOTSTRAP_USERS', json.dumps([entry]))
     with TestClient(app) as client:
         result = client.post('/api/auth/login', json={'username': 'laurent', 'password': 'test-laurent-password-1234'})
         assert result.status_code == 200
-        assert result.json()['role'] == 'junior_annotator'
-        assert client.get('/api/users').status_code == 403
+        assert result.json()['role'] == role
+        assert client.get('/api/users').status_code == (200 if role == 'admin' else 403)
     entry.update(role='reviewer', password_hash=password_hash('different-bootstrap-password'))
     monkeypatch.setenv('ONCOMETRA_BOOTSTRAP_USERS', json.dumps([entry]))
     with TestClient(app) as client:
         result = client.post('/api/auth/login', json={'username': 'laurent', 'password': 'test-laurent-password-1234'})
         assert result.status_code == 200
-        assert result.json()['role'] == 'junior_annotator'
+        assert result.json()['role'] == role
         assert client.post('/api/auth/login', json={'username': 'laurent', 'password': 'different-bootstrap-password'}).status_code == 401
+
+
+def test_role_changes_require_admin_and_preserve_account(clients):
+    admin, reader, reviewer = clients
+    target = reader.get('/api/auth/me').json()
+    study_id = assigned(reader, fixture_case())
+    url = f'/api/users/{target["id"]}/role'
+    request = {'expected_role': 'junior_annotator', 'role': 'admin'}
+    assert reader.patch(url, json=request).status_code == 403
+    assert reviewer.patch(url, json=request).status_code == 403
+    assert admin.patch(url, json={**request, 'role': 'invalid'}).status_code == 422
+    assert admin.patch(url, json=request, headers={'Origin': 'https://untrusted.example'}).status_code == 403
+    assert admin.patch(url, json={**request, 'expected_role': 'reviewer'}).status_code == 409
+    promoted = admin.patch(url, json=request)
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json() == {**target, 'role': 'admin'}
+    assert reader.get('/api/auth/me').status_code == 401
+    assert reader.post('/api/auth/login', json={'username':'reader','password':'test-reader-password-1234'}).status_code == 200
+    assert reader.get('/api/auth/me').json()['role'] == 'admin'
+    assert reader.get(f'/api/lung/studies/{study_id}').status_code == 200
+    events = reader.get('/api/audit').json()
+    assert any(event['action'] == 'user_role_changed' and event['subject_id'] == target['id']
+               and event['details'] == {'from':'junior_annotator','to':'admin'} for event in events)
+    owner = admin.get('/api/auth/me').json()
+    assert admin.patch(f'/api/users/{owner["id"]}/role', json={'expected_role':'admin','role':'reviewer'}).status_code == 409
+    assert admin.patch(f'/api/users/{uuid4()}/role', json=request).status_code == 404
+    assert admin.patch(url, json={'expected_role':'admin','role':'junior_annotator'}).status_code == 200
+    assert reader.get('/api/auth/me').status_code == 401
+    assert reader.post('/api/auth/login', json={'username':'reader','password':'test-reader-password-1234'}).status_code == 200
+    assert reader.get('/api/audit').status_code == 403
 
 
 def test_reader_isolation_and_independent_approval(clients):

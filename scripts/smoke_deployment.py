@@ -24,7 +24,7 @@ def main():
             parsed = shlex.split(value)
             config[key] = parsed[0] if parsed else ""
     with httpx.Client(base_url=args.url, timeout=120) as client:
-        assert client.get("/healthz").json()["version"] == "0.2.1"
+        assert client.get("/healthz").json()["version"] == "0.2.2"
         assert client.get("/api/workspace").status_code == 401
         client.post("/api/auth/login", json={"username": "saad", "password": config["ONCOMETRA_ADMIN_PASSWORD"]}).raise_for_status()
         model = client.get('/api/lung/model').json()

@@ -26,8 +26,8 @@ import SimpleITK as sitk
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, engine, SessionLocal
@@ -209,7 +209,7 @@ class BootstrapUser(BaseModel):
     username: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{2,79}$")
     name: str = Field(min_length=1, max_length=120)
     password_hash: str = Field(pattern=r"^[a-f0-9]{32}\$[a-f0-9]{64}$")
-    role: str = Field(pattern=r"^(junior_annotator|senior_annotator|reviewer)$")
+    role: str = Field(pattern=r"^(junior_annotator|senior_annotator|reviewer|admin)$")
 
 
 def seed_demo():
@@ -260,7 +260,7 @@ async def lifespan(app):
     lung.stop_jobs()
 
 
-app = FastAPI(title="Oncometra Annotation", version="0.2.1", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Oncometra Annotation", version="0.2.2", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.dependency_overrides[annotation_db] = workspace_db
 
 
@@ -288,7 +288,7 @@ async def boundaries(request, call_next):
 
 @app.get("/healthz")
 def health():
-    return {"status": "ok", "application": "oncometra", "version": "0.2.1"}
+    return {"status": "ok", "application": "oncometra", "version": "0.2.2"}
 
 
 class Login(BaseModel):
@@ -654,6 +654,37 @@ def audit_log(user=Depends(current_user)):
         return [{"action": row.action, "subject_id": row.subject_id, "details": row.details,
                  "created_at": row.created_at.isoformat(), "user_id": row.user_id}
                 for row in db.scalars(select(WorkspaceAudit).order_by(WorkspaceAudit.created_at.desc()).limit(100))]
+
+
+class UserRoleChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: str = Field(pattern=r"^(junior_annotator|senior_annotator|reviewer|admin)$")
+    expected_role: str = Field(pattern=r"^(junior_annotator|senior_annotator|reviewer|admin)$")
+
+
+@app.patch("/api/users/{user_id}/role")
+def change_user_role(user_id: UUID, req: UserRoleChange, user=Depends(current_user)):
+    require_admin(user)
+    if str(user_id) == user.id and req.role != "admin":
+        raise HTTPException(409, "An administrator cannot demote their own account")
+    with SessionLocal() as db:
+        target = db.get(WorkspaceUser, str(user_id))
+        if target is None:
+            raise HTTPException(404, "User not found")
+        if not set(target.projects).issubset(user.projects):
+            raise HTTPException(403, "Cannot manage users outside your projects")
+        if target.role != req.expected_role:
+            raise HTTPException(409, "The user's role changed. Refresh before trying again.")
+        if target.role != req.role:
+            changed = db.execute(update(WorkspaceUser).where(WorkspaceUser.id == target.id,
+                WorkspaceUser.role == req.expected_role).values(role=req.role))
+            if changed.rowcount != 1:
+                raise HTTPException(409, "The user's role changed. Refresh before trying again.")
+            db.execute(delete(WorkspaceSession).where(WorkspaceSession.user_id == target.id))
+            audit(db, user, "user_role_changed", target.id, {"from": req.expected_role, "to": req.role})
+            db.commit()
+            db.refresh(target)
+        return user_payload(target)
 
 
 def extract_features(job_id, slot):

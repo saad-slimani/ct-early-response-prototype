@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import shlex
+import tempfile
 import zipfile
 
 import httpx
@@ -22,16 +23,29 @@ def private_file(path, value):
         output.write(value)
 
 
+def replace_private_file(path, value):
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + '.')
+    try:
+        with os.fdopen(descriptor, 'w') as output:
+            output.write(value)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("snapshot", "provision"))
+    parser.add_argument("action", choices=("snapshot", "provision", "set-role"))
     parser.add_argument("--url", default="https://oncometra-demo.onrender.com")
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--private-dir", type=Path, required=True)
     parser.add_argument("--username", default="laurent")
     parser.add_argument("--name", default="Laurent")
-    parser.add_argument("--role", choices=("junior_annotator", "senior_annotator", "reviewer"), default="junior_annotator")
+    parser.add_argument("--role", choices=("junior_annotator", "senior_annotator", "reviewer", "admin"))
     args = parser.parse_args()
+    if args.action == 'set-role' and not args.role:
+        parser.error('--role is required for an intentional role change')
+    args.role = args.role or 'junior_annotator'
     config = {}
     for line in args.env_file.read_text().splitlines():
         key, separator, value = line.partition("=")
@@ -64,6 +78,34 @@ def main():
                 if archive.testzip() is not None:
                     raise RuntimeError('Snapshot integrity check failed')
             print(f'Saved {len(workspace["assignments"])} assignments with metadata, image pixels, mask revisions and feature results: {target}')
+        elif args.action == 'set-role':
+            path = args.private_dir / (args.username + '-account.json')
+            bootstrap = args.private_dir / (args.username + '-bootstrap.txt')
+            account = json.loads(path.read_text())
+            key, separator, value = bootstrap.read_text().partition('=')
+            if not separator or key != 'ONCOMETRA_BOOTSTRAP_USERS' or account['username'] != args.username:
+                raise RuntimeError('Private account/bootstrap records do not match the requested user')
+            entries = json.loads(value)
+            matches = [entry for entry in entries if entry['username'] == args.username]
+            if len(matches) != 1:
+                raise RuntimeError('Expected exactly one matching bootstrap account')
+            existing = next((user for user in get('/api/users').json() if user['username'] == args.username), None)
+            if not existing:
+                raise RuntimeError('Account does not exist; refusing to create a replacement during a role change')
+            result = client.patch(f'/api/users/{existing["id"]}/role', json={'role':args.role, 'expected_role':existing['role']})
+            result.raise_for_status()
+            with httpx.Client(base_url=args.url, timeout=120) as collaborator:
+                result = collaborator.post('/api/auth/login', json={key: account[key] for key in ('username', 'password')})
+                result.raise_for_status()
+                if result.json()['role'] != args.role:
+                    raise RuntimeError('Updated role did not match the requested role')
+                if args.role == 'admin':
+                    collaborator.get('/api/audit').raise_for_status()
+                collaborator.post('/api/auth/logout').raise_for_status()
+            account['role'] = matches[0]['role'] = args.role
+            replace_private_file(path, json.dumps(account, indent=2) + '\n')
+            replace_private_file(bootstrap, key + '=' + json.dumps(entries, separators=(',', ':')) + '\n')
+            print(f'Role verified: {args.username} / {args.role}. Password and user ID unchanged. Update Render from {bootstrap}')
         else:
             path = args.private_dir / (args.username + '-account.json')
             if path.exists():
