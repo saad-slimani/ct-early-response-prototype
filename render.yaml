@@ -19,6 +19,8 @@ services:
         value: "true"
       - key: COOKIE_SECURE
         value: "true"
+      - key: LUNG_MODEL_BACKEND
+        value: litemedsam
       - key: ONCOMETRA_ADMIN_PASSWORD
         generateValue: true
       - key: ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS

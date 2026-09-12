@@ -409,7 +409,7 @@ function setTool(tool) {
   state.tool = tool; state.brushHover = null;
   document.querySelectorAll("[data-tool]").forEach((el) => {el.classList.toggle("active", el.dataset.tool === tool); el.setAttribute("aria-pressed", el.dataset.tool === tool);});
   views.forEach((view) => view.canvas.style.cursor = tool === "pan" ? "grab" : tool === "zoom" ? "zoom-in" : "crosshair");
-  $("interaction-hint").textContent = {box: "Box one lesion in any plane. Up to 64 slices normal to the prompt plane.", brush: "Paint: add voxels | Pinch: zoom | Cmd/Ctrl+Z: undo", erase: "Paint: remove voxels | Pinch: zoom | Cmd/Ctrl+Z: undo", pan: "Drag: pan | Pinch: zoom | Double-click: focus/restore", zoom: "Drag up/down or scroll: zoom | +/-: zoom selected view | Fit: reset", crosshair: "Double-click: focus/restore | Pinch: zoom | Scroll: slice | Cmd/Ctrl+Z: undo"}[tool];
+  $("interaction-hint").textContent = {box: "Box one lesion in any plane. Set the slice range in the inspector.", brush: "Paint: add voxels | Pinch: zoom | Cmd/Ctrl+Z: undo", erase: "Paint: remove voxels | Pinch: zoom | Cmd/Ctrl+Z: undo", pan: "Drag: pan | Pinch: zoom | Double-click: focus/restore", zoom: "Drag up/down or scroll: zoom | +/-: zoom selected view | Fit: reset", crosshair: "Double-click: focus/restore | Pinch: zoom | Scroll: slice | Cmd/Ctrl+Z: undo"}[tool];
   updateControls(); requestRender();
 }
 function isEditTool() {return ["brush", "erase"].includes(state.tool);}
@@ -601,7 +601,15 @@ function updateControls() {
   $("delete-nodule").textContent = nodule ? `Delete ${nodule.id}` : 'Delete nodule mask';
   $("delete-mask-note").textContent = confirmed ? "Reopen the case before deleting a nodule." : state.preview ? "Return to the saved mask before deleting it." : "Deletes only the selected nodule. Others are preserved. Undo restores it.";
   const validBox = validPrompt();
-  $("run-model").disabled = !ready || !state.model?.available || state.meta?.modality === 'MR' || running || !validBox || confirmed || readOnly || !nodule;
+  $("run-model").disabled = !ready || !state.model?.available || !(state.model?.modalities || ['CT']).includes(state.meta?.modality) || running || !validBox || confirmed || readOnly || !nodule;
+  $('model-slice-radius').disabled = running || confirmed || readOnly;
+  if (state.model?.id === 'litemedsam-onnx') {
+    const radius = Number($('model-slice-radius').value);
+    const normal = axes(state.box?.plane || state.activePlane)[2];
+    const frame = state.box?.frame_index ?? state.cross[normal];
+    const last = (state.meta?.size_xyz[normal] || 1) - 1;
+    $('model-range-note').textContent = state.meta ? `Slices ${Math.max(0, frame-radius)+1}-${Math.min(last, frame+radius)+1} in the ${state.box?.plane || state.activePlane} plane. The same box is used on each slice; inspect all results.` : '';
+  }
   $("run-model").hidden = confirmed || state.preview;
   const runningJob = state.jobs.find((job) => ['queued', 'running'].includes(job.status));
   $("run-model").textContent = running ? `Segmenting N${jobNoduleLabel(runningJob)}...` : "Run segmentation";
@@ -654,8 +662,8 @@ function updateControls() {
     $("accept-proposal").disabled = !ready || !flow.freshProposal || confirmed;
     $("accept-proposal").textContent = !flow.freshProposal ? "Result is outdated" : "Use result & edit";
     const result = state.job.result;
-    $("job-detail").textContent = thisRunning ? `CPU inference for N${jobNoduleLabel(state.job)}. You can work on other nodules.` :
-      status === "succeeded" ? `${result.elapsed_seconds.toFixed(0)} seconds / ${result.volume_ml.toFixed(3)} mL. ${result.touches_crop_boundary ? "WARNING: mask touches the crop boundary; inspect for truncation. " : ""}${result.empty_prediction ? "The model returned an empty mask. " : ""}Preview replaces only N${jobNoduleLabel(state.job)}; other colors are saved nodules. Red overlap must be resolved.` : state.job.error || "No draft was changed.";
+    $("job-detail").textContent = thisRunning ? `CPU inference for N${jobNoduleLabel(state.job)}. ${state.job.progress ? `${state.job.progress.completed} / ${state.job.progress.total} slices processed.` : 'Loading model.'} You can work on other nodules.` :
+      status === "succeeded" ? `${result.elapsed_seconds.toFixed(0)} seconds / ${result.volume_ml.toFixed(3)} mL. ${result.touches_crop_boundary ? "WARNING: mask reaches a processed boundary; inspect and extend the range if needed. " : ""}${result.empty_prediction ? "The model returned an empty mask. " : ""}Preview replaces only N${jobNoduleLabel(state.job)}; other colors are saved nodules. Red overlap must be resolved.` : state.job.error || "No draft was changed.";
     $("model-provenance").textContent = result ? JSON.stringify(result, null, 2) : "";
   }
   if (undoQueue.pending && !undoQueue.running && undoQueue.canRun()) task(() => undoQueue.drain())();
@@ -686,7 +694,9 @@ async function startSegmentation() {
   if (state.busy || $("run-model").disabled) return;
   state.busy = true; updateControls();
   try {
-    state.job = await post(`${base()}/jobs`, {...state.box, version: state.meta.version, nodule_label: state.selectedNodule});
+    state.job = await post(`${base()}/jobs`, {...state.box, version: state.meta.version, nodule_label: state.selectedNodule,
+      slice_radius: Number($('model-slice-radius').value), window_level: state.meta.modality === 'CT' ? state.window.level : 40,
+      window_width: state.meta.modality === 'CT' ? state.window.width : 400});
     state.jobs = [state.job, ...state.jobs]; state.meta.jobs = state.jobs;
     state.runningJobId = state.job.id;
     state.noduleBoxes[state.selectedNodule] = state.box;
@@ -811,6 +821,7 @@ async function changeReview(action, payload = {version: state.meta?.version}) {
     state.jobs = state.meta.jobs; reconcileNodules();
     if (action !== "reopen") setTool("crosshair");
     syncCaseStatus(); renderHistory();
+    if (embedded) parent.postMessage({type: 'oncometra:annotation-updated', studyId: state.id}, location.origin);
     notify({complete: "Task completed. Export is available; reviewer approval is a separate step.",
       approve: "Task approved. Export this revision or Undo approval to return to Completed.",
       "undo-approval": "Approval undone. The mask is unchanged; status is Completed.",
@@ -819,6 +830,7 @@ async function changeReview(action, payload = {version: state.meta?.version}) {
   finally {state.busy = false; updateControls(); requestRender(); task(() => undoQueue.drain())();}
 }
 $("overlay-opacity").addEventListener("input", requestRender);
+$('model-slice-radius').addEventListener('change', updateControls);
 $("reset-view").addEventListener("click", () => {views.forEach((v) => {v.zoom = 1; v.pan = [0, 0];}); requestRender();});
 $("toggle-mpr").addEventListener("click", () => focusView(state.focusedPlane ? null : state.activePlane));
 $("zoom-in").addEventListener("click", () => zoomView(views.find((v) => v.plane === state.activePlane), 1.25));
@@ -991,8 +1003,13 @@ async function init() {
   $("test-identity").title = identities.notice;
   clinicalCopy();
   state.model = await json("/api/lung/model");
+  $('model-name').textContent = state.model.name;
+  $('model-scope').textContent = state.model.scope;
+  $('model-terms').textContent = `${state.model.license} ${state.model.validation}`;
+  $('model-range-control').hidden = state.model.id !== 'litemedsam-onnx';
+  $('model-preprocessing').textContent = state.model.id === 'litemedsam-onnx' ? 'CT: current display window in HU. MRI: 0.5-99.5 percentile clipping and slice normalization. Not whole-volume detection.' : 'Input requirement: CT intensities in Hounsfield units (HU), not normalized image values.';
   $("connection").textContent = state.model.available ? "Model available (CPU)" : "Model unavailable";
-  $("model-availability").textContent = state.model.available ? "Research-only model. Output is not clinically validated." : "Model not configured. Manual annotation is available.";
+  $("model-availability").textContent = state.model.available ? `${state.model.name} ready. Inspect every proposal before accepting.` : "Model not configured. Manual annotation is available.";
   await loadCases();
   const initial = new URLSearchParams(location.search).get("study_id");
   if (initial) await openCase(initial); selectView(state.activePlane); setTool(state.tool); updateControls();

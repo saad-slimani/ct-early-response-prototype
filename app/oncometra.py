@@ -18,6 +18,7 @@ import secrets
 import shutil
 import threading
 import tempfile
+import zipfile
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -32,9 +33,11 @@ from sqlalchemy.exc import IntegrityError
 from app.db import Base, engine, SessionLocal
 from app.models import Patient, StudyRecord, WorklistItem, AnnotationHead, AnnotationRevision
 from app.oncometra_models import WorkspaceUser, WorkspaceSession, WorkspaceCase, WorkspaceAssignment, WorkspaceFeatureJob, WorkspaceAudit
+os.environ.setdefault("LUNG_MODEL_BACKEND", "litemedsam")
 from app import lung_api as lung
 from app.services.annotation_review import annotation_db, latest_task_event, task_status, actor_for
 from app.services.storage import DATA_ROOT
+from app.services.feature_protocol import FeatureRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 COOKIE = "oncometra_session"
@@ -49,10 +52,6 @@ PROJECTS = [
     {"id": "rectum-mr", "name": "Rectum", "modality": "MR", "target": "Rectal tumor", "color": "#ab7290", "pending": "TCGA-READ MRI selection awaits image and tumor verification."},
 ]
 PROJECT_IDS = [project["id"] for project in PROJECTS]
-FEATURE_PROTOCOL = {"id": "ct-original-v1", "version": 1,
-    "setting": {"binWidth": 25, "resampledPixelSpacing": None, "normalize": False, "additionalInfo": True},
-    "imageType": {"Original": {}},
-    "featureClass": {name: [] for name in ("firstorder", "shape", "glcm", "glrlm", "glszm", "gldm", "ngtdm")}}
 _feature_slot = threading.Lock()
 _login_attempts = {}
 _login_lock = threading.Lock()
@@ -206,6 +205,13 @@ def create_assignment(db, case, user, kind="reader", source=None):
     return assignment
 
 
+class BootstrapUser(BaseModel):
+    username: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{2,79}$")
+    name: str = Field(min_length=1, max_length=120)
+    password_hash: str = Field(pattern=r"^[a-f0-9]{32}\$[a-f0-9]{64}$")
+    role: str = Field(pattern=r"^(junior_annotator|senior_annotator|reviewer)$")
+
+
 def seed_demo():
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
@@ -226,6 +232,10 @@ def seed_demo():
                 raise RuntimeError("ONCOMETRA_ADMIN_PASSWORD must be at least 12 characters")
             db.add(WorkspaceUser(username="saad", name="Saad Slimani", password_hash=password_hash(password),
                                  role="admin", projects=PROJECT_IDS))
+        for entry in json.loads(os.getenv("ONCOMETRA_BOOTSTRAP_USERS", "[]")):
+            account = BootstrapUser.model_validate(entry)
+            if not db.scalar(select(WorkspaceUser).where(WorkspaceUser.username == account.username)):
+                db.add(WorkspaceUser(**account.model_dump(), projects=PROJECT_IDS))
         for manifest in sorted((ROOT / "demo-cases").glob("*/case.json")):
             info = json.loads(manifest.read_text())
             if db.scalar(select(WorkspaceCase).where(WorkspaceCase.project_id == info["project_id"], WorkspaceCase.patient_id == info["patient_id"])):
@@ -250,7 +260,7 @@ async def lifespan(app):
     lung.stop_jobs()
 
 
-app = FastAPI(title="Oncometra Annotation", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Oncometra Annotation", version="0.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.dependency_overrides[annotation_db] = workspace_db
 
 
@@ -278,7 +288,7 @@ async def boundaries(request, call_next):
 
 @app.get("/healthz")
 def health():
-    return {"status": "ok", "application": "oncometra", "version": "0.1.0"}
+    return {"status": "ok", "application": "oncometra", "version": "0.2.0"}
 
 
 class Login(BaseModel):
@@ -646,8 +656,15 @@ def audit_log(user=Depends(current_user)):
                 for row in db.scalars(select(WorkspaceAudit).order_by(WorkspaceAudit.created_at.desc()).limit(100))]
 
 
-def extract_features(job_id):
-    with _feature_slot, SessionLocal() as db:
+def extract_features(job_id, slot):
+    try:
+        _extract_features(job_id)
+    finally:
+        slot.__exit__(None, None, None)
+
+
+def _extract_features(job_id):
+    with SessionLocal() as db:
         job = db.get(WorkspaceFeatureJob, job_id)
         try:
             job.status = "running"
@@ -657,6 +674,9 @@ def extract_features(job_id):
             mask_path = lung.revision_path(job.study_id, job.revision_id)
             image, mask = sitk.ReadImage(str(image_path)), sitk.ReadImage(str(mask_path))
             lung.same_grid(mask, image)
+            spacing = job.protocol["setting"].get("resampledPixelSpacing")
+            if spacing and np.prod(np.asarray(image.GetSize()) * np.asarray(image.GetSpacing()) / spacing) > 20_000_000:
+                raise ValueError("Requested resampling exceeds the demo memory limit. Use a coarser spacing or native grid.")
             extractor = featureextractor.RadiomicsFeatureExtractor({key: value for key, value in job.protocol.items() if key in ("setting", "imageType", "featureClass")})
             labels = np.unique(sitk.GetArrayViewFromImage(mask))
             rows = []
@@ -683,35 +703,51 @@ def extract_features(job_id):
 
 
 @app.post("/api/assignments/{study_id}/radiomics", status_code=202)
-def run_features(study_id: UUID, user=Depends(current_user)):
-    with SessionLocal() as db:
+def run_features(study_id: UUID, req: FeatureRequest, user=Depends(current_user)):
+    with _feature_slot, SessionLocal() as db:
         assignment, case = get_assignment(db, study_id, user)
         state = state_for(db, assignment)
-        if state["status"] not in ("completed", "approved"):
-            raise HTTPException(409, "Complete the annotation before extracting features")
+        if state["status"] != "approved":
+            raise HTTPException(409, "Independent approval is required before generating a feature file")
+        head = lung.study_head(db, study_id)
+        lung.check_version(head, req.version)
+        if state["revision_id"] != str(req.revision_id):
+            raise HTTPException(409, "The approved revision changed. Refresh before generating a file.")
         active = db.scalar(select(WorkspaceFeatureJob).where(WorkspaceFeatureJob.status.in_(["queued", "running"])))
         if active:
             raise HTTPException(409, "One extraction is already active. This demo runs one job at a time.")
-        protocol = json.loads(json.dumps(FEATURE_PROTOCOL))
-        if case.modality == "MR":
-            protocol.update(id="mr-zscore-original-v1")
-            protocol["setting"].update(normalize=True, normalizeScale=100, binWidth=20)
+        protocol = req.settings.protocol(case.modality)
         protocol["submission_status"] = state["status"]
         protocol["sequence"] = case.source.get("sequence")
+        approval = latest_task_event(db, head)
+        protocol["approval_event_id"] = approval.id
+        protocol["approval_version"] = state["version"]
+        protocol["reviewer"] = approval.actor
         job = WorkspaceFeatureJob(id=str(uuid4()), study_id=str(study_id), user_id=user.id,
                                   revision_id=state["revision_id"], protocol=protocol)
-        db.add(job)
-        audit(db, user, "radiomics_requested", str(study_id), {"revision_id": state["revision_id"]})
-        db.commit()
-        threading.Thread(target=extract_features, args=(job.id,), daemon=True).start()
+        slot = lung.worker_slot()
+        slot.__enter__()
+        try:
+            lung.lock_head(db, head)
+            db.add(job)
+            audit(db, user, "feature_file_requested", str(study_id), {"revision_id": state["revision_id"], "protocol": protocol})
+            db.commit()
+            threading.Thread(target=extract_features, args=(job.id, slot), daemon=True).start()
+        except Exception:
+            slot.__exit__(None, None, None)
+            raise
         return {"id": job.id, "status": job.status}
 
 
 @app.get("/api/radiomics")
-def feature_jobs(user=Depends(current_user)):
+def feature_jobs(study_id: UUID | None = None, user=Depends(current_user)):
     with SessionLocal() as db:
         result = []
-        for job in db.scalars(select(WorkspaceFeatureJob).order_by(WorkspaceFeatureJob.created_at.desc()).limit(100)):
+        query = select(WorkspaceFeatureJob).order_by(WorkspaceFeatureJob.created_at.desc())
+        if study_id:
+            get_assignment(db, study_id, user)
+            query = query.where(WorkspaceFeatureJob.study_id == str(study_id))
+        for job in db.scalars(query.limit(100)):
             try:
                 assignment, case = get_assignment(db, job.study_id, user)
             except HTTPException:
@@ -720,26 +756,31 @@ def feature_jobs(user=Depends(current_user)):
             result.append({"id": job.id, "study_id": job.study_id, "patient_id": case.patient_id,
                 "project_id": case.project_id, "status": job.status, "error": job.error,
                 "revision_id": job.revision_id, "protocol": job.protocol,
-                "stale": state["revision_id"] != job.revision_id or state["status"] not in ("completed", "approved"),
+                "stale": state["revision_id"] != job.revision_id or state["status"] != "approved"
+                    or state["version"] != job.protocol.get("approval_version"),
                 "result": job.result, "created_at": job.created_at.isoformat()})
         return result
 
 
 @app.get("/api/radiomics/{job_id}/export")
 def feature_export(job_id: UUID, format: str = "csv", user=Depends(current_user)):
-    if format not in ("csv", "json"):
-        raise HTTPException(422, "Supported formats are csv and json")
+    if format not in ("csv", "json", "zip"):
+        raise HTTPException(422, "Supported formats are csv, json and zip")
     with SessionLocal() as db:
         job = db.get(WorkspaceFeatureJob, str(job_id))
         if not job:
             raise HTTPException(404, "Run not found")
-        _, case = get_assignment(db, job.study_id, user)
+        assignment, case = get_assignment(db, job.study_id, user)
+        state = state_for(db, assignment)
+        if state["status"] != "approved" or state["revision_id"] != job.revision_id or state["version"] != job.protocol.get("approval_version"):
+            raise HTTPException(409, "This file's approval is no longer current. Generate a file from the current approved revision.")
         if job.status != "succeeded":
             raise HTTPException(409, "Extraction is not complete")
         audit(db, user, "radiomics_exported", job.id)
         db.commit()
+        manifest = {**job.result, "protocol": job.protocol, "source": case.source}
         if format == "json":
-            return JSONResponse({**job.result, "protocol": job.protocol, "source": case.source})
+            return JSONResponse(manifest, headers={"Content-Disposition": f'attachment; filename="features-{job.id}.json"'})
         rows = [{"patient_id": case.patient_id, "study_id": job.study_id, "revision_id": job.revision_id,
                  "protocol": job.protocol["id"], "lesion_label": row["lesion_label"], **row["features"]} for row in job.result["rows"]]
         fields = list(dict.fromkeys(key for row in rows for key in row))
@@ -748,7 +789,14 @@ def feature_export(job_id: UUID, format: str = "csv", user=Depends(current_user)
         writer.writeheader()
         writer.writerows({key: "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")) else value
                           for key, value in row.items()} for row in rows)
-        return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="radiomics-{job.id}.csv"'})
+        if format == "zip":
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
+                package.writestr("features.csv", output.getvalue())
+                package.writestr("manifest.json", json.dumps(manifest, indent=2))
+                package.writestr("pyradiomics-settings.json", json.dumps({key: job.protocol[key] for key in ("setting", "imageType", "featureClass")}, indent=2))
+            return Response(archive.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="features-{job.id}.zip"'})
+        return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="features-{job.id}.csv"'})
 
 
 @app.get("/")

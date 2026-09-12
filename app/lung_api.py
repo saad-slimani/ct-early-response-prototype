@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 from typing import Literal
@@ -61,6 +62,10 @@ class SegmentationRequest(NoduleRequest):
     plane: Literal["axial", "coronal", "sagittal"] = "axial"
     frame_index: int = Field(ge=0, strict=True)
     box_xyxy: list[float] = Field(min_length=4, max_length=4)
+    slice_radius: int = Field(default=4, ge=0, le=15, strict=True)
+    window_level: float = Field(default=40, ge=-2000, le=4000, allow_inf_nan=False)
+    window_width: float = Field(default=400, ge=1, le=10000, allow_inf_nan=False)
+    prompt_source: Literal["user_drawn_box", "reference_derived_technical_test"] = "user_drawn_box"
 
 
 class StrokeRequest(NoduleRequest):
@@ -206,7 +211,9 @@ def save_revision(db, head, image, mask, kind, details, nodules=None, changed_no
 
 
 def public_job(job):
-    return {"id": job.id, "study_id": job.study_id, "base_version": job.base_version,
+    progress_path = job_folder(job.study_id, job.id) / "progress.json"
+    progress = json.loads(progress_path.read_text()) if progress_path.exists() else None
+    return {"id": job.id, "study_id": job.study_id, "base_version": job.base_version, "progress": progress,
             "status": job.status, "prompt": job.prompt, "result": job.result, "error": job.error,
             "created_at": job.created_at.isoformat() + "Z", "updated_at": job.updated_at.isoformat() + "Z"}
 
@@ -219,13 +226,16 @@ def get_job(db, study_id, job_id):
 
 
 def model_status():
+    if os.getenv("LUNG_MODEL_BACKEND") == "litemedsam":
+        from app.services.medsam_runtime import status
+        return status()
     configured = all(bool(os.getenv(key)) and Path(os.environ[key]).exists()
                      for key in ("LUNG_MODEL_PYTHON", "LUNG_MODEL_SOURCE", "LUNG_MODEL_WEIGHTS"))
     enabled = os.getenv("LUNG_RESEARCH_ENABLED", "").lower() == "true"
     return {"id": "medsam2-efficient-tiny", "name": "Efficient MedSAM2 Tiny", "configured": configured,
             "enabled": enabled, "available": configured and enabled,
             "license": "Research/education only. Commercial rights unresolved.",
-            "device": "CPU", "scope": "One user-localized lesion; at most 64 slices and 256 x 256 pixels.",
+            "device": "CPU", "modalities": ["CT"], "scope": "One user-localized lesion; at most 64 slices and 256 x 256 pixels.",
             "validation": "Three-case technical pilot, not independent clinical validation."}
 
 
@@ -553,7 +563,9 @@ def execute_job(job_id, directory, slot, lock_fd):
                 return
         timeout = max(30, min(1800, int(os.getenv("LUNG_JOB_TIMEOUT_SECONDS", "600"))))
         with (directory / "worker.log").open("w") as log:
-            process = subprocess.Popen([os.environ["LUNG_MODEL_PYTHON"], "-m", "app.services.lung_worker",
+            lite = os.getenv("LUNG_MODEL_BACKEND") == "litemedsam"
+            process = subprocess.Popen([sys.executable if lite else os.environ["LUNG_MODEL_PYTHON"], "-m",
+                                        "app.services.medsam_worker" if lite else "app.services.lung_worker",
                                         str(directory / "request.json")], cwd=str(Path(__file__).resolve().parents[1]),
                                        stdout=log, stderr=log, pass_fds=(lock_fd,),
                                        env={**os.environ, "PYTHONUNBUFFERED": "1"})
@@ -577,8 +589,12 @@ def execute_job(job_id, directory, slot, lock_fd):
         if process.returncode:
             finish_job(job_id, "failed", "Model worker failed. See the local worker.log; no heuristic was substituted.")
             return
-        result = json.loads((directory / "result.json").read_text())
         request = json.loads((directory / "request.json").read_text())
+        if request.get("model_id") == "litemedsam-onnx":
+            from app.services.medsam_jobs import collect_result
+            result = collect_result(directory, image_for(request["study_id"]))
+        else:
+            result = json.loads((directory / "result.json").read_text())
         proposal = sitk.ReadImage(str(directory / "proposal.nii.gz"))
         same_grid(proposal, image_for(request["study_id"]))
         values = sitk.GetArrayViewFromImage(proposal)
@@ -589,6 +605,8 @@ def execute_job(job_id, directory, slot, lock_fd):
         logger.exception("Local segmentation job %s failed", job_id)
         finish_job(job_id, "failed", "Unable to complete the model job. Check worker configuration and local logs.")
     finally:
+        for name in ("pixels.npy", "proposal.npy"):
+            (directory / name).unlink(missing_ok=True)
         if process is not None:
             if process.poll() is None:
                 process.terminate()
@@ -606,15 +624,26 @@ def execute_job(job_id, directory, slot, lock_fd):
 @router.post("/studies/{study_id}/jobs", status_code=202)
 def start_job(study_id: UUID, req: SegmentationRequest, db: Session = Depends(get_db)):
     head = study_head(db, study_id)
-    if db.get(StudyRecord, str(study_id)).modality != "CT":
-        raise HTTPException(422, "The configured model adapter is CT-only. MRI model validation is pending; manual annotation is available.")
+    study = db.get(StudyRecord, str(study_id))
+    model = model_status()
+    if study.modality not in model.get("modalities", ["CT"]):
+        raise HTTPException(422, "This model does not support the study modality")
     check_version(head, req.version)
     check_editable(db, head)
     nodule, _ = selected_nodule(db, head, req.nodule_label)
-    if not model_status()["available"]:
-        raise HTTPException(503, "Local research model is not configured or enabled. Manual annotation remains available.")
+    if not model["available"]:
+        raise HTTPException(503, "Segmentation model is unavailable. Manual annotation remains available.")
     try:
-        crop, starts, _ = crop_for_prompt(image_for(str(study_id)), req.frame_index, req.box_xyxy, req.plane)
+        if model["id"] == "litemedsam-onnx":
+            from app.services.lung_geometry import plane_axes
+            image = image_for(str(study_id))
+            a, b, normal = plane_axes(req.plane)
+            x0, y0, x1, y1 = req.box_xyxy
+            if not np.isfinite(req.box_xyxy).all() or not (0 <= x0 < x1 < image.GetSize()[a] and 0 <= y0 < y1 < image.GetSize()[b] and req.frame_index < image.GetSize()[normal]):
+                raise ValueError("Draw a nonempty box fully inside the selected image")
+            crop, starts = image, [0, 0, 0]
+        else:
+            crop, starts, _ = crop_for_prompt(image_for(str(study_id)), req.frame_index, req.box_xyxy, req.plane)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if not _runner_lock.acquire(blocking=False):
@@ -631,12 +660,19 @@ def start_job(study_id: UUID, req: SegmentationRequest, db: Session = Depends(ge
         job = LungSegmentationJob(id=str(uuid4()), study_id=str(study_id), base_version=req.version,
                                   status="queued", prompt={"plane": req.plane, "frame_index": req.frame_index, "box_xyxy": req.box_xyxy,
                                   "nodule_label": nodule["label"], "nodule_revision_id": nodule["mask_revision_id"],
-                                  "actor": actor_for(db), "identity_mode": "self_selected_test",
+                                  "actor": actor_for(db), "identity_mode": actor_for(db).get("identity_mode", "self_selected_test"),
+                                  "model_id": model["id"], "modality": study.modality,
+                                  "prompt_source": req.prompt_source,
+                                  "slice_radius": req.slice_radius, "window_level": req.window_level, "window_width": req.window_width,
                                   "crop_start_xyz": starts, "crop_size_xyz": list(crop.GetSize())})
         directory = job_folder(study_id, job.id)
         directory.mkdir(parents=True, exist_ok=False)
-        (directory / "request.json").write_text(json.dumps({"study_id": str(study_id),
-            "image": str(store.image_path(str(study_id), "baseline").resolve()), **job.prompt}))
+        request = {"study_id": str(study_id), "image": str(store.image_path(str(study_id), "baseline").resolve()), **job.prompt}
+        if model["id"] == "litemedsam-onnx":
+            from app.services.medsam_jobs import stage_job
+            stage_job(directory, image_for(str(study_id)), request)
+        else:
+            (directory / "request.json").write_text(json.dumps(request))
         db.add(job)
         db.commit()
         thread = threading.Thread(target=execute_job, args=(job.id, directory, slot, lock_file.fileno()), daemon=True)

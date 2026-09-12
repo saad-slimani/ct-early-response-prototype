@@ -84,6 +84,27 @@ def test_authentication_and_csrf(clients):
     assert reader.get('/api/lung/identities',headers={'X-Annotation-Actor':'reviewer'}).json()['current']['role']=='junior_annotator'
 
 
+def test_bootstrap_account_survives_restart_without_resetting_existing_user(monkeypatch):
+    from app.oncometra import password_hash
+
+    Base.metadata.drop_all(engine)
+    entry = {'username': 'laurent', 'name': 'Laurent', 'role': 'junior_annotator',
+             'password_hash': password_hash('test-laurent-password-1234')}
+    monkeypatch.setenv('ONCOMETRA_BOOTSTRAP_USERS', json.dumps([entry]))
+    with TestClient(app) as client:
+        result = client.post('/api/auth/login', json={'username': 'laurent', 'password': 'test-laurent-password-1234'})
+        assert result.status_code == 200
+        assert result.json()['role'] == 'junior_annotator'
+        assert client.get('/api/users').status_code == 403
+    entry.update(role='reviewer', password_hash=password_hash('different-bootstrap-password'))
+    monkeypatch.setenv('ONCOMETRA_BOOTSTRAP_USERS', json.dumps([entry]))
+    with TestClient(app) as client:
+        result = client.post('/api/auth/login', json={'username': 'laurent', 'password': 'test-laurent-password-1234'})
+        assert result.status_code == 200
+        assert result.json()['role'] == 'junior_annotator'
+        assert client.post('/api/auth/login', json={'username': 'laurent', 'password': 'different-bootstrap-password'}).status_code == 401
+
+
 def test_reader_isolation_and_independent_approval(clients):
     admin, reader, reviewer=clients
     case=fixture_case()
@@ -149,7 +170,12 @@ def test_pyradiomics_is_real_versioned_and_invalidated(clients):
     admin, reader, reviewer=clients
     study_id=assigned(reader,fixture_case())
     completed=complete(reader,study_id)
-    result=reader.post(f'/api/assignments/{study_id}/radiomics',json={})
+    request={'version':completed['version'],'revision_id':completed['revision_id']}
+    assert reader.post(f'/api/assignments/{study_id}/radiomics',json=request).status_code==409
+    assert reviewer.post(f'/api/lung/studies/{study_id}/approve',json={**request,'reviewed':True}).status_code==200
+    approved=reader.get(f'/api/lung/studies/{study_id}').json()
+    request={'version':approved['version'],'revision_id':approved['revision_id']}
+    result=reader.post(f'/api/assignments/{study_id}/radiomics',json=request)
     assert result.status_code==202,result.text
     job_id=result.json()['id']
     for _ in range(200):
@@ -165,8 +191,39 @@ def test_pyradiomics_is_real_versioned_and_invalidated(clients):
     assert not job['stale']
     csv_export=reader.get(f'/api/radiomics/{job_id}/export')
     assert csv_export.status_code==200 and 'original_shape_MeshVolume' in csv_export.text
-    assert reader.post(f'/api/lung/studies/{study_id}/reopen',json={'version':completed['version']}).status_code==200
+    package=reader.get(f'/api/radiomics/{job_id}/export?format=zip')
+    assert package.status_code==200
+    with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        protocol=json.loads(archive.read('pyradiomics-settings.json'))
+        manifest=json.loads(archive.read('manifest.json'))
+        assert protocol['setting']['binWidth']==25
+        assert manifest['protocol']['reviewer']['username']=='reviewer'
+    assert reviewer.post(f'/api/lung/studies/{study_id}/undo-approval',json={'version':approved['version']}).status_code==200
     assert reader.get('/api/radiomics').json()[0]['stale']
+    assert reader.get(f'/api/radiomics/{job_id}/export').status_code==409
+
+
+def test_configurable_features_require_current_approval(clients):
+    admin, reader, reviewer=clients
+    study_id=assigned(reader,fixture_case('MR'))
+    completed=complete(reader,study_id)
+    request={'version':completed['version'],'revision_id':completed['revision_id'],'reviewed':True}
+    assert reviewer.post(f'/api/lung/studies/{study_id}/approve',json=request).status_code==200
+    approved=reader.get(f'/api/lung/studies/{study_id}').json()
+    request={'version':approved['version'],'revision_id':approved['revision_id'],
+             'settings':{'families':['shape','firstorder'],'bin_width':10,'normalize':True,'normalize_scale':100}}
+    assert reader.post(f'/api/assignments/{study_id}/radiomics',json={**request,'version':0}).status_code==409
+    assert reader.post(f'/api/assignments/{study_id}/radiomics',json={**request,'settings':{'families':['madeup']}}).status_code==422
+    result=reader.post(f'/api/assignments/{study_id}/radiomics',json=request)
+    assert result.status_code==202,result.text
+    for _ in range(200):
+        job=reader.get('/api/radiomics',params={'study_id':study_id}).json()[0]
+        if job['status'] in ('succeeded','failed'):
+            break
+        time.sleep(.05)
+    assert job['status']=='succeeded',job
+    assert set(job['protocol']['featureClass'])=={'shape','firstorder'}
+    assert all(key.startswith(('original_shape_','original_firstorder_')) for key in job['result']['rows'][0]['features'])
 
 
 def test_import_limits_and_valid_mri(clients):
@@ -178,3 +235,32 @@ def test_import_limits_and_valid_mri(clients):
     assert reader.post('/api/import',data={'project_id':'brain-mr','patient_id':'UPLOADED-MR','deidentified':'false'},files={'files':('image.nii.gz',payload)}).status_code==422
     result=reader.post('/api/import',data={'project_id':'brain-mr','patient_id':'UPLOADED-MR','deidentified':'true'},files={'files':('image.nii.gz',payload)})
     assert result.status_code==422
+
+
+@pytest.mark.parametrize('plane', ['axial', 'coronal', 'sagittal'])
+def test_actual_medsam_jobs_are_proposals_and_undoable(clients, plane):
+    admin, reader, reviewer=clients
+    study_id=assigned(reader,fixture_case('MR'))
+    base=f'/api/lung/studies/{study_id}'
+    state=reader.get(base).json()
+    started=reader.post(base+'/jobs',json={'version':state['version'],'plane':plane,'frame_index':12,
+        'box_xyxy':[6,6,17,17],'slice_radius':0})
+    assert started.status_code==202,started.text
+    job_id=started.json()['id']
+    for _ in range(300):
+        job=reader.get(base+'/jobs/'+job_id).json()
+        if job['status'] not in ('queued','running'):
+            break
+        time.sleep(.1)
+    assert job['status']=='succeeded',job
+    assert job['result']['model_id']=='litemedsam-onnx'
+    assert job['result']['slices_processed']==1
+    assert job['result']['modality']=='MR'
+    assert reader.get(base).json()['revision_id'] is None
+    assert reader.get(base+'/mask',params={'job_id':job_id}).status_code==200
+    accepted=reader.post(base+'/jobs/'+job_id+'/accept',json={'version':state['version']})
+    assert accepted.status_code==200,accepted.text
+    new=reader.get(base).json()
+    assert new['revision_id'] is not None
+    assert reader.post(base+'/restore-initial',json={'version':new['version']}).status_code==200
+    assert all(nodule['voxel_count']==0 for nodule in reader.get(base).json()['nodules'])
