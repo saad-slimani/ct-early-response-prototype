@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Oncometra | Annotation workspace</title>
-  <link rel="stylesheet" href="/assets/oncometra.css">
+  <link rel="stylesheet" href="/assets/oncometra.css?v=fullscreen-1">
   <script type="module" src="/assets/oncometra.js"></script>
 </head>
 <body>
@@ -24,7 +24,7 @@
       <span class="nav-spacer"></span><span id="storage-status" class="storage-status">Checking storage</span>
     </nav>
     <main id="content" class="content"></main>
-    <section id="annotation-page" class="annotation-page" hidden><div class="annotation-context"><button id="back-worklist" class="quiet">Back to worklist</button><span id="assignment-context"></span><span class="nav-spacer"></span><button id="reference-load">Load reference for practice</button><button id="feature-export" hidden>Feature file</button><button id="refresh-assignment">Refresh assignment</button></div><iframe id="viewer" title="CT and MRI annotation viewer"></iframe></section>
+    <section id="annotation-page" class="annotation-page" hidden><div class="annotation-context"><button id="back-worklist" class="quiet">Back to worklist</button><span id="assignment-context"></span><span class="nav-spacer"></span><button id="reference-load">Load reference for practice</button><button id="feature-export" hidden>Feature file</button><button id="refresh-assignment">Refresh assignment</button></div><iframe id="viewer" title="CT and MRI annotation viewer" allow="fullscreen" allowfullscreen></iframe></section>
     <footer id="app-footer"><span>Public-data demonstration. Not for clinical decisions.</span><span id="data-notice">Changes on free hosting may be lost after a restart. Export completed work.</span></footer>
   </div>
   <dialog id="modal"><div class="modal-heading"><h2 id="modal-title"></h2><button id="modal-close" class="quiet" aria-label="Close dialog">Close</button></div><div id="modal-body"></div></dialog>

@@ -10,3 +10,7 @@
 .feature-file span { flex: 1; overflow-wrap: anywhere; }
 .feature-file small { display: block; margin-top: 4px; color: #64748b; }
 @media (max-width: 600px) { .feature-settings { grid-template-columns: 1fr; } .feature-families { grid-template-columns: 1fr 1fr; } }
+
+.annotation-fullscreen,.annotation-fullscreen body{height:100%;overflow:hidden}
+.annotation-fullscreen .app-header,.annotation-fullscreen .app-nav,.annotation-fullscreen .annotation-context,.annotation-fullscreen #app-footer{display:none}
+.annotation-fullscreen .annotation-page,.annotation-fullscreen #viewer{height:100dvh}

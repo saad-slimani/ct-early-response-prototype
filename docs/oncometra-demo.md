@@ -49,6 +49,10 @@ also implementing durable image, mask, revision and artifact storage.
    practice draft. Reference-assisted work is not independent validation data.
 3. Inspect axial, coronal and sagittal planes. Edit individual lesion labels with
    2D or 3D brushes, erase or delete a lesion, and undo edits.
+   Select Full screen in the viewer toolbar, or press F, to hide the workspace
+   chrome and expand the annotation area. Esc or Exit full screen returns without
+   resetting the slice, focused plane, zoom or mask. Inspector toggles the lesion
+   and model panel. Unsupported browsers use an escapable expanded-window view.
 4. Complete the case. Another reviewer can inspect, approve, return with comments,
    compare submitted union masks, or create a separate adjudicated copy.
 5. After independent approval, choose Feature file on the case or review row.
@@ -127,6 +131,7 @@ bootstrap record after an intentional role change on disposable hosting.
 ```bash
 python -m pytest tests/test_oncometra.py tests/test_medsam_runtime.py -q
 python -m scripts.smoke_medsam
+node --test tests/viewer-fullscreen.test.mjs
 ```
 
 Tests cover authentication, reader isolation, independent approval, completion

@@ -1,5 +1,5 @@
 import {collectDirectoryEntries, classifyFiles, hiddenPath} from '/import-files.mjs?v=dicom-import-1';
-import {PLANE_AXES, zoomTransform, wheelPixels, nextFocus, isTextEditing, UndoQueue} from '/viewer-controls.mjs?v=multiplane-1';
+import {PLANE_AXES, zoomTransform, wheelPixels, nextFocus, isTextEditing, UndoQueue, ViewerFullscreen} from '/viewer-controls.mjs?v=fullscreen-1';
 import {workflowState, STATUS_LABELS} from '/annotation-workflow.mjs?v=nodules-1';
 import {jobNoduleLabel, selectedNodule, proposalIsCurrent, previewLabel} from '/nodule-controls.mjs?v=nodules-1';
 import {DIAMETER_PRESETS, createEditSettings, normalizeDiameter, strokeSpec, sphereSectionRadius} from '/mask-editing.mjs?v=mask-tools-1';
@@ -61,7 +61,26 @@ function notify(message, error = false) {
 function handle(error) { notify(error.message || String(error), true); }
 function task(fn) { return (...args) => { Promise.resolve().then(() => fn(...args)).catch(handle); }; }
 
+let fullscreenTarget = document.documentElement;
+try {
+  // Expand the same-origin workspace too, not only the iframe's existing rectangle.
+  if (embedded && window.frameElement?.id === 'viewer') fullscreenTarget = parent.document.documentElement;
+} catch { /* A standalone/cross-origin viewer can still request its own fullscreen. */ }
+const fullscreen = new ViewerFullscreen(fullscreenTarget, ({active, expanded, pending}) => {
+  document.documentElement.classList.toggle('annotation-fullscreen', active);
+  const button = $('toggle-fullscreen');
+  button.disabled = pending;
+  button.classList.toggle('active', active);
+  button.setAttribute('aria-pressed', String(active));
+  button.querySelector('span').textContent = active ? (expanded ? 'Exit expanded view' : 'Exit full screen') : 'Full screen';
+  button.title = active ? 'Return to workspace (Esc or F)' : 'Enter full screen (F)';
+  requestRender();
+}, () => notify('Browser full screen is unavailable here. Annotation view expanded; press Esc to return.'));
+$('toggle-fullscreen').addEventListener('click', () => fullscreen.toggle().catch(handle));
+window.addEventListener('pagehide', () => fullscreen.destroy().catch(() => {}));
+
 function showPage(page) {
+  if (page !== 'annotate' && fullscreen.active) fullscreen.exit().catch(handle);
   state.page = page;
   document.querySelectorAll(".page").forEach((el) => el.hidden = el.id !== `page-${page}`);
   document.querySelectorAll(".tabs [data-page]").forEach((el) => el.classList.toggle("selected", el.dataset.page === page));
@@ -881,12 +900,15 @@ for (const id of ["window-width", "window-level"]) $(id).addEventListener("chang
   $("window-preset").value = "custom"; requestRender();
 });
 document.addEventListener("keydown", (event) => {
-  if (isTextEditing(event.target) || document.querySelector("dialog[open]") || state.page !== "annotate") return;
+  if (document.querySelector("dialog[open]") || state.page !== "annotate") return;
   const key = event.key.toLowerCase();
+  if (key === 'escape' && fullscreen.active) {event.preventDefault(); fullscreen.exit().catch(handle); return;}
+  if (isTextEditing(event.target) || event.target.closest('select')) return;
   if ((event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey) {event.preventDefault(); task(requestUndo)(); return;}
   if (key === "escape" && state.focusedPlane) {event.preventDefault(); focusView(null); return;}
   if (views.some((v) => v.drag)) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (key === 'f' && !event.repeat) {event.preventDefault(); fullscreen.toggle().catch(handle); return;}
   const tool = {v: "crosshair", b: "box", p: "brush", e: "erase", h: "pan", z: "zoom"}[key];
   if (key === "+" || key === "=" || key === "-") {event.preventDefault(); zoomView(views.find((v) => v.plane === state.activePlane), key === "-" ? .8 : 1.25);}
   if (tool) setTool(tool); if (key === "m") toggleOverlay();
