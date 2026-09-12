@@ -1,0 +1,22 @@
+{
+  "project_id": "lung-ct",
+  "patient_id": "lung_022",
+  "modality": "CT",
+  "sequence": null,
+  "source": "Medical Segmentation Decathlon",
+  "source_url": "https://medicaldecathlon.com/",
+  "archive_url": "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task06_Lung.tar",
+  "image_member": "Task06_Lung/imagesTr/lung_022.nii.gz",
+  "mask_member": "Task06_Lung/labelsTr/lung_022.nii.gz",
+  "source_image_sha256": "49de20e4aab49b0baea293c07f843fb4816b02028e8472587631b6edbe3f3e0e",
+  "source_mask_sha256": "a6df7b2137f61196336c7e65091e2d64d3152cfe31fcbe5fd3bd5621e8c0e664",
+  "license": "CC BY-SA 4.0",
+  "citation": "Simpson et al., A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv:1902.09063.",
+  "derived": true,
+  "downsample_factor": 2,
+  "tumor_label": 1,
+  "note": "Derived public demonstration volume. Nonempty source tumor label and geometry checked; not independent clinical validation.",
+  "reference_voxels": 16804,
+  "image.nii.gz_sha256": "cb3f874497c3daf731e5a843b5f1c2f881b4635608a25b749c6b5d9ee7e0032f",
+  "reference.nii.gz_sha256": "2b24d31b245ca7a80e2ee12cac4f54e3dad188b452e9f4502135ae06eedeb5e1"
+}

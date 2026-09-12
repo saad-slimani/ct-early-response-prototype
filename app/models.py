@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -199,3 +199,62 @@ class ViewerMeasurement(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     study = relationship("StudyRecord", back_populates="measurements")
+
+
+class AnnotationHead(Base):
+    __tablename__ = "lung_annotation_heads"
+
+    study_id = Column(String(36), ForeignKey("studies.id"), primary_key=True)
+    revision_id = Column(String(36), nullable=True)
+    version = Column(Integer, default=0, nullable=False)
+
+
+class AnnotationRevision(Base):
+    __tablename__ = "lung_annotation_revisions"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=False, index=True)
+    parent_id = Column(String(36), nullable=True)
+    kind = Column(String(32), nullable=False)
+    details = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AnnotationReviewEvent(Base):
+    __tablename__ = "lung_annotation_review_events"
+    __table_args__ = (UniqueConstraint("study_id", "version"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=False, index=True)
+    revision_id = Column(String(36), nullable=False)
+    version = Column(Integer, nullable=False)
+    action = Column(String(16), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AnnotationTaskEvent(Base):
+    __tablename__ = "lung_annotation_task_events"
+    __table_args__ = (UniqueConstraint("study_id", "version"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=False, index=True)
+    revision_id = Column(String(36), nullable=True)
+    version = Column(Integer, nullable=False)
+    action = Column(String(24), nullable=False)
+    status = Column(String(16), nullable=False)
+    actor = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class LungSegmentationJob(Base):
+    __tablename__ = "lung_segmentation_jobs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    study_id = Column(String(36), ForeignKey("studies.id"), nullable=False, index=True)
+    base_version = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False, default="queued")
+    prompt = Column(JSON, nullable=False)
+    result = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)

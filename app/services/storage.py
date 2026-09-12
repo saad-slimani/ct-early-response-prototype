@@ -38,6 +38,11 @@ class StudyStore:
     def mask_path(self, study_id: str, timepoint: str) -> Path:
         return self.study_dir(study_id) / f"{timepoint}_mask.nii.gz"
 
+    def dicom_archive_path(self, study_id: str, timepoint: str = "baseline") -> Path:
+        if timepoint not in ("baseline", "followup"):
+            raise ValueError("Unknown series timepoint")
+        return self.study_dir(study_id) / "original_dicom" / f"{timepoint}.zip"
+
     def meta_path(self, study_id: str) -> Path:
         return self.study_dir(study_id) / "meta.json"
 

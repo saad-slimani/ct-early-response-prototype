@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import tempfile
+import zipfile
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from uuid import UUID
 
 import numpy as np
 import SimpleITK as sitk
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -36,6 +39,8 @@ from app.services.segmentation import SeedPoint, Segmenter
 from app.services.speech_to_text import SpeechToTextNotConfigured, SpeechToTextService
 from app.services.storage import StudyStore
 from app.services.workflow import WorkflowService
+from app.services.dicom_archive import preserve_series, stage_dicom_inputs
+from app.lung_api import router as lung_router, recover_jobs, stop_jobs
 
 
 class Seed(BaseModel):
@@ -138,7 +143,16 @@ speech_to_text = SpeechToTextService()
 
 init_db()
 
-app = FastAPI(title="AI-Native Imaging Workspace", version="0.2.0")
+@asynccontextmanager
+async def lifespan(_app):
+    recover_jobs()
+    try:
+        yield
+    finally:
+        stop_jobs()
+
+
+app = FastAPI(title="AI-Native Imaging Workspace", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -430,20 +444,26 @@ async def create_study(
     study_id = store.create_study()
 
     try:
-        async def load_upload(upload: UploadFile) -> sitk.Image:
+        async def load_upload(upload: UploadFile, timepoint: str) -> sitk.Image:
             name = (upload.filename or "scan.nii.gz").lower()
             suffix = ".nii.gz" if name.endswith(".nii.gz") else Path(name).suffix
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(await upload.read())
                 tmp_path = Path(tmp.name)
             try:
-                return load_scan_from_file(tmp_path)
+                size = 0
+                with tmp_path.open("wb") as destination:
+                    while chunk := await upload.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > 512 * 1024 * 1024:
+                            raise HTTPException(413, "Upload exceeds the 512 MB local limit")
+                        destination.write(chunk)
+                return load_scan_from_file(tmp_path, dicom_archive_path=store.dicom_archive_path(study_id, timepoint))
             finally:
                 tmp_path.unlink(missing_ok=True)
 
-        baseline_image = await load_upload(baseline_scan)
+        baseline_image = await load_upload(baseline_scan, "baseline")
         comparison_uploaded = bool(followup_scan and followup_scan.filename)
-        followup_image = await load_upload(followup_scan) if comparison_uploaded and followup_scan else baseline_image
+        followup_image = await load_upload(followup_scan, "followup") if comparison_uploaded and followup_scan else baseline_image
 
         for timepoint, image in (("baseline", baseline_image), ("followup", followup_image)):
             save_nifti(image, store.image_path(study_id, timepoint))
@@ -505,6 +525,8 @@ async def create_study(
             status="draft",
         )
         return {"study_id": study_id, "meta": store.read_meta(study_id), "workspace": _workspace_payload(db, study_id)}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -522,21 +544,33 @@ async def bulk_upload_dicom_folder(
 ) -> Dict[str, Any]:
     if not dicom_files:
         raise HTTPException(status_code=400, detail="Upload at least one DICOM file.")
+    if len(dicom_files) > 3000:
+        raise HTTPException(413, "Limit DICOM uploads to 3,000 files per batch")
 
     created: List[Dict[str, Any]] = []
     with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
+        uploaded_root, root = Path(td) / "uploads", Path(td) / "dicom"
+        uploaded_root.mkdir()
         written = 0
+        total_bytes = 0
         for index, upload in enumerate(dicom_files):
-            payload = await upload.read()
-            if not payload:
-                continue
-            (root / _safe_upload_filename(upload.filename or "", index)).write_bytes(payload)
-            written += 1
+            file_bytes = 0
+            with (uploaded_root / _safe_upload_filename(upload.filename or "", index)).open("wb") as destination:
+                while chunk := await upload.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    file_bytes += len(chunk)
+                    if total_bytes > 512 * 1024 * 1024:
+                        raise HTTPException(413, "DICOM batch exceeds the 512 MB local limit")
+                    destination.write(chunk)
+            written += int(file_bytes > 0)
 
         if written == 0:
             raise HTTPException(status_code=400, detail="Uploaded DICOM folder was empty.")
 
+        try:
+            stage_dicom_inputs(uploaded_root, root)
+        except (ValueError, OSError, zipfile.BadZipFile, RuntimeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
         series_rows = discover_dicom_series(root)
         if not series_rows:
             raise HTTPException(status_code=400, detail="No DICOM series found in uploaded folder.")
@@ -544,6 +578,7 @@ async def bulk_upload_dicom_folder(
         for index, metadata in enumerate(series_rows):
             study_id = store.create_study()
             image = read_dicom_series_from_dir(root, str(metadata["series_id"]))
+            original_dicom = preserve_series(root, str(metadata["series_id"]), store.dicom_archive_path(study_id))
             for timepoint in ("baseline", "followup"):
                 save_nifti(image, store.image_path(study_id, timepoint))
                 save_nifti(create_empty_mask(image), store.mask_path(study_id, timepoint))
@@ -569,6 +604,7 @@ async def bulk_upload_dicom_folder(
                     "comparison_uploaded": False,
                     "source": "dicom-folder",
                     "dicom_metadata": metadata,
+                    "original_dicom": original_dicom,
                     "baseline": stats,
                     "followup": stats,
                 },
@@ -635,6 +671,17 @@ async def bulk_upload_dicom_folder(
         "first_study_id": created[0]["study_id"] if created else None,
         "first_workspace": first_workspace,
     }
+
+
+@app.get("/api/studies/{study_id}/dicom/download")
+def download_original_dicom(study_id: UUID, timepoint: Literal["baseline", "followup"] = "baseline",
+                            db: Session = Depends(get_db)):
+    workflow.get_study(db, str(study_id))
+    archive = store.dicom_archive_path(str(study_id), timepoint)
+    if not archive.is_file():
+        raise HTTPException(404, "No original DICOM files retained for this series. Re-import the DICOM folder/ZIP; NIfTI uploads cannot be exported as original DICOM.")
+    return FileResponse(archive, media_type="application/zip", filename=f"dicom-{study_id}-{timepoint}.zip",
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/studies/{study_id}")
@@ -950,6 +997,16 @@ def healthz() -> Dict[str, Any]:
 
 
 static_dir = Path(__file__).resolve().parent / "static"
+
+app.include_router(lung_router)
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/annotate", include_in_schema=False)
+def lung_workspace():
+    return FileResponse(static_dir / "annotate.html")
+
+
 app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 

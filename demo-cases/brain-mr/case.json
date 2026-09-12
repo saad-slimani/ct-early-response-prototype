@@ -1,0 +1,22 @@
+{
+  "project_id": "brain-mr",
+  "patient_id": "BRATS_206",
+  "modality": "MR",
+  "sequence": "T1 post-contrast",
+  "source": "Medical Segmentation Decathlon",
+  "source_url": "https://medicaldecathlon.com/",
+  "archive_url": "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task01_BrainTumour.tar",
+  "image_member": "Task01_BrainTumour/imagesTr/BRATS_206.nii.gz",
+  "mask_member": "Task01_BrainTumour/labelsTr/BRATS_206.nii.gz",
+  "source_image_sha256": "cb7547bb3ea75ca639409e71c71ffcaaad2de2a61f7ac4bc0b304636d7f12c06",
+  "source_mask_sha256": "2be4fb1bf53e600f00240e7c35bc4f8617861a7627cb91c116bbc25bb9ed9890",
+  "license": "CC BY-SA 4.0",
+  "citation": "Simpson et al., A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv:1902.09063.",
+  "derived": true,
+  "downsample_factor": 1,
+  "tumor_label": null,
+  "note": "Derived public demonstration volume. Nonempty source tumor label and geometry checked; not independent clinical validation.",
+  "reference_voxels": 266936,
+  "image.nii.gz_sha256": "243e7e0d29b85fe5bf74cb8a3a3383072e48fc7a80e6b0c04f71f68d470f512c",
+  "reference.nii.gz_sha256": "b3e76bd68498475e4fc6cc8438851a6f2525d543f1f0404ba2990babe015d8f2"
+}

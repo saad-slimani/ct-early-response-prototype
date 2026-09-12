@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import SimpleITK as sitk
 from PIL import Image
+from app.services.dicom_archive import preserve_series, stage_dicom_inputs
 
 
 COMMON_DICOM_TAGS = {
@@ -94,22 +95,29 @@ def ensure_3d_image(image: sitk.Image) -> sitk.Image:
     return image3d
 
 
-def load_scan_from_file(upload_path: Path) -> sitk.Image:
+def load_scan_from_file(upload_path: Path, *, dicom_archive_path: Path | None = None) -> sitk.Image:
     suffixes = upload_path.suffixes
     if upload_path.suffix == ".zip":
         with tempfile.TemporaryDirectory() as td:
-            tdir = Path(td)
-            with zipfile.ZipFile(upload_path, "r") as zf:
-                zf.extractall(tdir)
-            if discover_dicom_series(tdir):
-                return ensure_3d_image(read_dicom_series_from_dir(tdir))
-            with tempfile.TemporaryDirectory() as flat_td:
-                flat_dir = Path(flat_td)
-                _flatten_dicom_directory(tdir, flat_dir)
-                return ensure_3d_image(read_dicom_series_from_dir(flat_dir))
+            source, flat = Path(td) / "source", Path(td) / "flat"
+            source.mkdir()
+            shutil.copyfile(upload_path, source / "scan.zip")
+            stage_dicom_inputs(source, flat)
+            series = discover_dicom_series(flat)
+            if len(series) != 1:
+                raise ValueError("Single-study ZIP requires exactly one DICOM series. Use bulk folder/ZIP import for multiple series.")
+            image = read_dicom_series_from_dir(flat, str(series[0]["series_id"]))
+            if dicom_archive_path:
+                preserve_series(flat, str(series[0]["series_id"]), dicom_archive_path)
+            return ensure_3d_image(image)
 
     if suffixes[-2:] == [".nii", ".gz"] or upload_path.suffix == ".nii":
-        return ensure_3d_image(sitk.ReadImage(str(upload_path)))
+        reader = sitk.ImageFileReader()
+        reader.SetFileName(str(upload_path))
+        reader.ReadImageInformation()
+        if np.prod(reader.GetSize()) * reader.GetNumberOfComponents() > 128 * 1024 * 1024:
+            raise ValueError("Image exceeds the 128-million-voxel local limit")
+        return ensure_3d_image(reader.Execute())
 
     raise ValueError("Unsupported format. Use .nii, .nii.gz, or DICOM .zip")
 

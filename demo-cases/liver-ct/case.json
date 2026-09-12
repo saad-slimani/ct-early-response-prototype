@@ -1,0 +1,22 @@
+{
+  "project_id": "liver-ct",
+  "patient_id": "liver_0",
+  "modality": "CT",
+  "sequence": null,
+  "source": "Medical Segmentation Decathlon",
+  "source_url": "https://medicaldecathlon.com/",
+  "archive_url": "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task03_Liver.tar",
+  "image_member": "Task03_Liver/imagesTr/liver_0.nii.gz",
+  "mask_member": "Task03_Liver/labelsTr/liver_0.nii.gz",
+  "source_image_sha256": "ffc5bbc51875660f7e72a8b3b5391a8b256e3b83edffc7428041a54422d3fec7",
+  "source_mask_sha256": "8915868143a1f73096c8068f80049c41f09466abce2bb6731f60c3a4e4e2a0cb",
+  "license": "CC BY-SA 4.0",
+  "citation": "Simpson et al., A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv:1902.09063.",
+  "derived": true,
+  "downsample_factor": 2,
+  "tumor_label": 2,
+  "note": "Derived public demonstration volume. Nonempty source tumor label and geometry checked; not independent clinical validation.",
+  "reference_voxels": 313,
+  "image.nii.gz_sha256": "385d3007f6954ca7443a08642f25dece62ba0c739f2d59a74f3434ddf291aa23",
+  "reference.nii.gz_sha256": "ab6fce603781fda08f452e4428f97ab6ec22908f2417ef7c9c2bb38133bd6c58"
+}

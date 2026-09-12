@@ -1,4 +1,27 @@
-# CT Early Response Web App (Prototype)
+# Oncometra Annotation Demo
+
+This branch deploys the standalone **CT / MRI annotation and radiomics demo**,
+not the legacy PACS/RIS application described below. Use `app.oncometra:app`.
+
+- Authenticated reader, reviewer, and administrator accounts; independent masks.
+- Seven tumor projects, with five real public, tumor-positive example volumes.
+- Multi-planar annotation, multi-lesion editing, undo, completion and independent approval.
+- NIfTI / NRRD mask export, image-and-mask bundles, and original DICOM download for DICOM imports.
+- Real PyRadiomics extraction pinned to image, mask revision, and protocol hashes.
+
+See [the demo deployment guide](docs/oncometra-demo.md) for setup and limitations.
+The free Render configuration is **disposable**: edits, uploads, accounts, and
+extraction results are lost on restart or idle spin-down. Export work beforehand.
+Do not upload patient or company-private data. AI inference is not enabled.
+
+[Deploy the demo on Render](https://render.com/deploy?repo=https://github.com/saad-slimani/ct-early-response-prototype/tree/codex/oncometra-demo)
+
+## Legacy Prototype Reference
+
+The following describes the older `app.main` application. It is not exposed by
+the Oncometra demo entry point and is retained as development history.
+
+### CT Early Response Web App (Prototype)
 
 See [docs/ai-native-pacs-ris-blueprint.md](docs/ai-native-pacs-ris-blueprint.md) for the broader product direction that extends this prototype toward an AI-native PACS/RIS platform.
 

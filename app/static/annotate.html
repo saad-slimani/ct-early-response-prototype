@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oncometra | Annotation</title>
+  <link rel="stylesheet" href="/annotate.css?v=nodules-1">
+  <link rel="stylesheet" href="/assets/oncometra-viewer.css">
+  <script type="module" src="/annotate.js?v=nodules-1"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Lung Tumor Annotation home"><span class="brand-mark">L</span><span>Lung Tumor <b>Annotation</b></span></a>
+    <span class="research-label">RESEARCH USE ONLY</span>
+    <span class="top-spacer"></span>
+    <label class="test-identity">Test identity <select id="test-identity" aria-label="Test identity" disabled><option>Loading...</option></select></label>
+    <span id="connection" class="connection">Connecting</span>
+    <button id="import-open" class="primary small">Import CT</button>
+  </header>
+  <nav class="tabs" aria-label="Workspace">
+    <button data-page="cases" class="selected">Worklist <span id="case-count">0</span></button>
+    <button data-page="annotate">Annotation <span id="case-tab">No case open</span></button>
+  </nav>
+
+  <main id="page-cases" class="page cases-page">
+    <div class="page-title"><h1>Worklist</h1><button id="refresh-cases" class="light-button">Refresh</button></div>
+    <section class="case-table-wrap">
+      <div class="table-top"><h2>Imported series</h2><div class="worklist-filters"><select id="case-status" aria-label="Filter by annotation status"><option value="">All statuses</option><option value="new">New</option><option value="in_progress">In progress</option><option value="completed">Completed</option><option value="approved">Approved</option></select><input id="case-search" type="search" placeholder="Filter by ID or description" aria-label="Filter cases"></div></div>
+      <div id="status-summary" class="status-summary" aria-label="Worklist status counts"></div>
+      <table class="case-table"><thead><tr><th>Patient / case ID</th><th>Series description</th><th>Modality</th><th>Annotation status</th><th></th></tr></thead><tbody id="cases-body"></tbody></table>
+      <div id="empty-cases" class="empty-cases"><h2>No studies imported</h2><p>Supported inputs: DICOM files, folders or ZIP archives; NIfTI volumes.</p><button id="empty-import" class="primary">Import CT</button></div>
+      <p id="no-matching-cases" class="no-matching-cases" hidden>No cases match these filters.</p>
+    </section>
+    <div class="scope-note"><strong>Research use only. Not for diagnosis.</strong><p>De-identified data required. Identities are self-selected for testing, not authenticated. Reviewer approval is not a clinical signature or independent-reader validation.</p></div>
+    <details class="public-data"><summary>Reference dataset: NSCLC-Radiogenomics</summary><p>Chest CT and tumor segmentations. CC BY 3.0; attribution required. Check for overlap with model training data before independent evaluation.</p><div><a href="https://www.cancerimagingarchive.net/collection/nsclc-radiogenomics/" target="_blank" rel="noopener noreferrer">TCIA dataset and attribution</a><a href="https://learn.canceridc.dev/data/downloading-data" target="_blank" rel="noopener noreferrer">IDC download instructions</a></div></details>
+  </main>
+
+  <main id="page-annotate" class="page annotation-page" hidden>
+    <div class="viewer-toolbar">
+      <div class="study-title"><strong id="study-title">Select a case</strong><span id="study-subtitle">CT annotation</span></div>
+      <label class="nodule-picker">Nodule <select id="nodule-select" aria-label="Selected nodule" disabled><option>No case</option></select></label>
+      <span class="divider"></span>
+      <label class="inline-control">Window <select id="window-preset"><option value="lung">Lung</option><option value="soft">Soft tissue</option><option value="bone">Bone</option><option value="custom">Custom</option></select></label>
+      <label class="inline-control numeric">W <input id="window-width" type="number" value="1500" min="1" max="8000"></label>
+      <label class="inline-control numeric">L <input id="window-level" type="number" value="-600" min="-3000" max="3000"></label>
+      <button id="reset-view" title="Reset zoom and pan">Fit</button>
+      <button id="toggle-mpr" class="active" title="Focus selected view or restore all planes; double-click a view to toggle">Focus view</button>
+      <button id="toggle-overlay" class="active" title="Toggle mask visibility (M)">Mask</button>
+      <span class="top-spacer"></span><span id="save-state" class="save-state">No draft</span>
+      <button id="export-mask" disabled>Export case</button>
+      <button id="toggle-inspector" aria-expanded="true" title="Show or hide the inspector">Inspector</button>
+    </div>
+    <section id="workflow-bar" class="workflow-bar" aria-label="Case workflow">
+      <div class="workflow-copy"><ol class="workflow-steps" aria-label="Annotation progress"><li data-step="1">1 <span>Segment</span></li><li data-step="2">2 <span>Inspect / edit</span></li><li data-step="3">3 <span>Completed</span></li><li data-step="4">4 <span>Approved</span></li></ol><p id="workflow-hint" role="status">Select a CT case to begin.</p></div>
+      <div class="workflow-actions">
+        <button id="draw-lesion" disabled>Draw lesion box</button>
+        <button id="run-model" class="primary" disabled>Run segmentation</button>
+        <button id="accept-proposal" class="primary" hidden>Use result &amp; edit</button>
+        <button id="confirm-case" disabled>Mark completed</button>
+        <button id="approve-case" class="primary" hidden>Approve case</button>
+        <button id="reopen-case" hidden>Reopen case</button>
+        <button id="workflow-undo" disabled title="Undo (Cmd/Ctrl+Z)">Undo</button>
+      </div>
+      <div id="edit-options" class="edit-options" role="group" aria-label="Brush and eraser settings" hidden>
+        <strong id="edit-tool-name">Brush</strong>
+        <div class="shape-switch" role="group" aria-label="Tool shape"><button data-edit-shape="circle" aria-pressed="true">2D Circle</button><button data-edit-shape="sphere" aria-pressed="false">3D Sphere</button></div>
+        <label class="diameter-input">Diameter <input id="edit-diameter" type="number" min="1" max="40" step="0.5" value="6" aria-label="Tool diameter in millimeters"> mm</label>
+        <input id="edit-size-slider" type="range" min="1" max="40" step="0.5" value="6" aria-label="Tool diameter slider">
+        <div id="size-presets" class="size-presets" role="group" aria-label="Diameter presets in millimeters"></div>
+        <span id="edit-scope" class="edit-scope">Current slice only</span>
+      </div>
+    </section>
+    <div id="annotation-layout" class="annotation-layout">
+      <aside class="tool-rail" aria-label="Annotation tools">
+        <button data-tool="crosshair" title="Linked crosshair (V)" class="active"><svg viewBox="0 0 24 24"><path d="M12 2v7m0 6v7M2 12h7m6 0h7"/><circle cx="12" cy="12" r="5"/></svg><span>Locate</span></button>
+        <button data-tool="box" title="Draw a segmentation box in any plane (B)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5"/></svg><span>AI box</span></button>
+        <button data-tool="brush" title="Paint mask (P)"><svg viewBox="0 0 24 24"><path d="m8 15 9-11 3 3L9 18M8 15c-5-1-2 5-5 5 6 1 8-2 5-5Z"/></svg><span>Brush</span></button>
+        <button data-tool="erase" title="Erase mask (E)"><svg viewBox="0 0 24 24"><path d="m4 14 10-10 7 7-10 10H8l-4-4Zm6-6 7 7M10 21h12"/></svg><span>Erase</span></button>
+        <button data-delete-mask disabled title="Delete the entire nodule mask across all slices; undoable" aria-label="Delete nodule mask"><svg viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg><span>Delete</span></button>
+        <button data-tool="pan" title="Pan image (H); shift+wheel to zoom"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4m12-8 4 4-4 4"/></svg><span>Pan</span></button>
+        <button data-tool="zoom" title="Zoom selected view: drag up/down or scroll (Z)"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><span>Zoom</span></button>
+        <button id="zoom-in" disabled title="Zoom in: axial view" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></svg><span>In</span></button>
+        <button id="zoom-out" disabled title="Zoom out: axial view" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M4 12h16"/></svg><span>Out</span></button>
+        <div class="rail-divider"></div>
+        <button id="undo" disabled title="Undo the last edit (Ctrl/Cmd+Z)"><svg viewBox="0 0 24 24"><path d="M8 5 3 10l5 5M3 10h11a6 6 0 0 1 0 12"/></svg><span>Undo</span></button>
+      </aside>
+      <section id="viewports" class="viewports" aria-label="Linked CT views">
+        <div class="viewport axial" data-plane="axial"><div class="viewport-label"><b>AXIAL</b><span class="plane-position"></span></div><canvas aria-label="Axial CT image. Draw a box here to prompt the model."></canvas><span class="orient top"></span><span class="orient left"></span><span class="orient right"></span><span class="orient bottom"></span><div class="viewport-bottom"><span class="view-info"></span><input type="range" min="0" value="0" aria-label="Axial slice"></div></div>
+        <div class="viewport coronal" data-plane="coronal"><div class="viewport-label"><b>CORONAL</b><span class="plane-position"></span></div><canvas aria-label="Coronal CT image"></canvas><span class="orient top"></span><span class="orient left"></span><span class="orient right"></span><span class="orient bottom"></span><div class="viewport-bottom"><span class="view-info"></span><input type="range" min="0" value="0" aria-label="Coronal slice"></div></div>
+        <div class="viewport sagittal" data-plane="sagittal"><div class="viewport-label"><b>SAGITTAL</b><span class="plane-position"></span></div><canvas aria-label="Sagittal CT image"></canvas><span class="orient top"></span><span class="orient left"></span><span class="orient right"></span><span class="orient bottom"></span><div class="viewport-bottom"><span class="view-info"></span><input type="range" min="0" value="0" aria-label="Sagittal slice"></div></div>
+        <div id="viewer-empty" class="viewer-empty"><h2>No CT selected</h2><p>Select a CT series from the worklist.</p><button data-page="cases">Open worklist</button></div>
+      </section>
+      <aside id="inspector" class="inspector">
+        <div class="inspector-head"><h2>Nodules <span id="nodule-count">0</span></h2><button id="add-nodule" disabled>Add nodule</button></div>
+        <div id="nodule-list" class="nodule-list" aria-label="Nodules"></div>
+        <p id="nodules-summary" class="nodules-summary">Select a CT case.</p>
+        <div class="target-card"><span class="mask-dot"></span><div><strong id="selected-nodule-name">No nodule selected</strong><span id="mask-volume">No saved mask</span></div><span id="revision-tag" class="pill">v0</span></div>
+        <div class="target-actions"><button id="delete-nodule" data-delete-mask class="danger-outline wide" disabled>Delete nodule mask</button><p id="delete-mask-note" class="fine-print">Deletes only the selected nodule. Others are preserved.</p></div>
+        <div id="confirmation-note" class="confirmation-note" hidden></div>
+        <div class="inspector-section"><div class="section-heading"><h3>Model-assisted segmentation</h3><span class="cpu-badge">CPU</span></div><strong class="model-name">Efficient MedSAM2 Tiny</strong><p class="muted">Draw a box in the axial, coronal or sagittal view. Inference covers up to 64 slices normal to that plane, not the full scan. Prompt-plane accuracy has not been independently validated.</p>
+          <div id="prompt-info" class="prompt-info">No bounding box defined</div>
+          <p class="fine-print">Input requirement: CT intensities in Hounsfield units (HU), not normalized image values.</p>
+          <div id="job-panel" class="job-panel" hidden><div class="job-heading"><span id="job-status">Queued</span><button id="cancel-job" class="text-button">Cancel</button></div><div id="job-progress" class="indeterminate" hidden></div><p id="job-detail" class="muted"></p><button id="preview-proposal" class="wide" hidden>Preview model mask</button></div>
+          <p id="model-availability" class="fine-print">Checking model configuration...</p>
+        </div>
+        <div class="inspector-section"><h3>Mask editing</h3><div class="edit-tool-buttons"><button data-tool="brush">Brush</button><button data-tool="erase">Erase</button></div><p class="muted">Select Brush or Erase for Circle / 3D Sphere controls above the images. Size is the physical diameter in mm; each tool retains its own settings.</p><p class="fine-print">Edits save automatically. Cmd/Ctrl+Z undoes a stroke or full-mask deletion.</p><label class="slider-label">Overlay opacity <input id="overlay-opacity" type="range" min="0" max="0.8" step="0.05" value="0.3"></label></div>
+        <details class="inspector-section"><summary>Case revision history <span id="history-count">0</span></summary><p class="fine-print">Each snapshot contains all nodules. Restoring a snapshot restores the whole case. Local test attribution only.</p><div id="history-list"></div><h3 class="review-history-title">Case review events</h3><div id="review-history"></div></details>
+        <details class="inspector-section"><summary>Source DICOM</summary><button id="download-dicom" class="wide" disabled>Download DICOM folder (.zip)</button><p id="dicom-source-note" class="fine-print">Original DICOM download becomes available after folder or ZIP import.</p></details>
+        <details class="inspector-section"><summary>Model &amp; geometry details</summary><div id="geometry-info" class="fine-print"></div><p class="fine-print">Pinned weights and code are checked for each run. No heuristic fallback. Research/education-only model use; commercial rights remain unresolved.</p><p class="fine-print">Each run targets one selected nodule. Accepting a result replaces only that nodule. Other labels are protected; overlapping AI results require correction. IDs are not recycled.</p><pre id="model-provenance"></pre></details>
+      </aside>
+    </div>
+    <footer class="viewer-footer"><span id="interaction-hint">Double-click: focus/restore | Pinch: zoom | Scroll: slice | Cmd/Ctrl+Z: undo</span><span>Native-grid views &middot; Research only &middot; Not for diagnosis</span></footer>
+  </main>
+
+  <dialog id="delete-mask-dialog"><form id="delete-mask-form">
+    <div class="dialog-heading"><h2>Delete selected nodule?</h2><button id="delete-mask-close" type="button">Cancel</button></div>
+    <p id="delete-mask-summary"></p>
+    <p>This removes only the selected nodule across all slices and planes, including any disconnected regions assigned to it. Other nodules, the CT and previous revisions are retained. Undo restores the mask and nodule ID.</p>
+    <button id="delete-mask-submit" class="danger wide" type="submit">Delete selected nodule</button>
+  </form></dialog>
+  <dialog id="confirm-dialog"><form id="confirm-form">
+    <div class="dialog-heading"><h2 id="review-heading">Complete annotation</h2><button id="confirm-close" type="button">Cancel</button></div>
+    <p id="confirm-summary"></p>
+    <label class="checkbox"><input id="mask-reviewed" type="checkbox" required> I inspected every nodule across the relevant slices and planes, including its extent and boundaries.</label>
+    <p id="review-explanation">Completion locks this saved mask and enables case export. Reopen or Undo completion to edit again. Reviewer approval is a separate step.</p>
+    <button id="confirm-submit" class="primary wide" type="submit">Mark completed</button>
+  </form></dialog>
+  <dialog id="export-dialog">
+    <div class="dialog-heading"><h2>Export case</h2><button id="export-close" type="button">Close</button></div>
+    <p id="export-summary"></p>
+    <div class="export-options">
+      <a data-export="bundle"><strong>CT + all nodules (.zip)</strong><span>Combined labelmap, Slicer segments, individual binary masks, review history and file hashes. Includes original DICOM when available.</span></a>
+      <a data-export="nrrd"><strong>3D Slicer segmentation (.seg.nrrd)</strong><span>Separate named segments with stable nodule IDs, colors and CT geometry.</span></a>
+      <a data-export="nifti"><strong>All nodules labelmap (.nii.gz)</strong><span>Label 1 = N1, 2 = N2, and so on; 0 = background. IDs remain unchanged when another nodule is deleted.</span></a>
+      <a data-export="dicom"><strong>Original DICOM folder (.zip)</strong><span>Original instances and metadata, without the edited mask.</span></a>
+    </div>
+    <p id="export-source-note"></p>
+    <p>Extract ZIP files before importing. Segmentation files are separate from DICOM; this is not a DICOM SEG or RTSTRUCT export. Verify alignment in the receiving application.</p>
+    <p id="export-feedback" role="status"></p>
+  </dialog>
+  <dialog id="import-dialog"><form id="import-form">
+    <div class="dialog-heading"><h2>Import CT</h2><button id="import-close" type="button" aria-label="Close import">Close</button></div>
+    <p>One DICOM series per case. Original DICOM files are retained for download, with their metadata unchanged.</p>
+    <div id="dicom-dropzone" class="file-drop"><strong>Drop a DICOM folder here</strong><span>Nested folders, multiple .dcm files, ZIP archives, or one NIfTI.</span><div class="file-pickers"><label>Choose files<input id="scan-file" type="file" multiple></label><label>Choose folder<input id="scan-folder" type="file" multiple webkitdirectory directory></label></div></div>
+    <div id="selected-files" class="selected-files" role="status">No files selected. You can also drop a folder anywhere in the workspace.</div>
+    <label id="case-id-field">Research case ID (NIfTI only)<input id="import-case-id" placeholder="e.g. LUNG-001" maxlength="64"></label>
+    <label class="checkbox"><input id="deidentified" type="checkbox" required> I confirm these files are de-identified research data. The app does not anonymize them.</label>
+    <div id="import-status" role="status"></div><progress id="upload-progress" max="100" value="0" hidden></progress>
+    <button id="import-submit" class="primary wide" type="submit" disabled>Import and open</button>
+  </form></dialog>
+  <div id="drop-overlay" hidden><div><strong>Drop to import CT</strong><span>DICOM folders / files / ZIP / NIfTI</span></div></div>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

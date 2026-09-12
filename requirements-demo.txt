@@ -1,0 +1,12 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.20
+numpy==1.26.4
+SimpleITK==2.5.2
+Pillow==11.3.0
+SQLAlchemy>=2.0,<3.0
+psycopg[binary]>=3.1,<4.0
+pyradiomics==3.0.1
+PyWavelets==1.8.0
+httpx==0.28.1
+pytest>=8,<9

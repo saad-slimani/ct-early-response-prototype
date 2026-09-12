@@ -1,0 +1,22 @@
+{
+  "project_id": "colon-ct",
+  "patient_id": "colon_207",
+  "modality": "CT",
+  "sequence": null,
+  "source": "Medical Segmentation Decathlon",
+  "source_url": "https://medicaldecathlon.com/",
+  "archive_url": "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task10_Colon.tar",
+  "image_member": "Task10_Colon/imagesTr/colon_207.nii.gz",
+  "mask_member": "Task10_Colon/labelsTr/colon_207.nii.gz",
+  "source_image_sha256": "5118581f34a0ef784ffd4a7ef14ef167c4e0dd24c219c8ccd9602a6e31677fd5",
+  "source_mask_sha256": "551a4c5283ffe2d2f1373f5030c64ce730ac52cd14d0c9ff45f1e6943950f336",
+  "license": "CC BY-SA 4.0",
+  "citation": "Simpson et al., A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv:1902.09063.",
+  "derived": true,
+  "downsample_factor": 2,
+  "tumor_label": 1,
+  "note": "Derived public demonstration volume. Nonempty source tumor label and geometry checked; not independent clinical validation.",
+  "reference_voxels": 3151,
+  "image.nii.gz_sha256": "97c07f976ab7b3fd0628ddca195b553c66092e441dec7adc6b143271dcaf716e",
+  "reference.nii.gz_sha256": "cb5df8ef977965b10d90c47b6631f9899aa6d340cc587a2bc1900b0ac4f2f342"
+}

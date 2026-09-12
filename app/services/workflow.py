@@ -17,7 +17,11 @@ from app.models import (
     TrainingRun,
     ViewerMeasurement,
     WorklistItem,
+    AnnotationHead,
+    AnnotationReviewEvent,
+    AnnotationTaskEvent,
 )
+from app.services.annotation_review import task_status, public_review
 
 
 class WorkflowService:
@@ -127,7 +131,26 @@ class WorkflowService:
         if assignee:
             stmt = stmt.where(WorklistItem.assignee == assignee)
         rows = db.execute(stmt).scalars().all()
-        return [self.serialize_worklist_item(row) for row in rows]
+        # Annotation task state stays independent of RIS/report signing.
+        heads = {head.study_id: head for head in db.execute(select(AnnotationHead)).scalars()}
+        confirmed = set(db.execute(select(AnnotationHead.study_id).join(AnnotationReviewEvent,
+            (AnnotationReviewEvent.study_id == AnnotationHead.study_id) &
+            (AnnotationReviewEvent.version == AnnotationHead.version) &
+            (AnnotationReviewEvent.revision_id == AnnotationHead.revision_id)
+        ).where(AnnotationReviewEvent.action == "confirmed")).scalars())
+        events = {}
+        for event in db.execute(select(AnnotationTaskEvent).order_by(AnnotationTaskEvent.version.desc())).scalars():
+            events.setdefault(event.study_id, event)
+        items = []
+        for row in rows:
+            item = self.serialize_worklist_item(row)
+            head = heads.get(row.study_id)
+            event = events.get(row.study_id)
+            item["annotation_status"] = task_status(head, event, row.study_id in confirmed)
+            item["annotation_event"] = public_review(event) if event else None
+            item["annotation_revision_id"] = head.revision_id if head else None
+            items.append(item)
+        return items
 
     def update_worklist(
         self,
@@ -513,6 +536,8 @@ class WorkflowService:
             "patient_name": patient.display_name if patient else None,
             "accession_number": study.accession_number if study else None,
             "body_part": study.body_part if study else None,
+            "modality": study.modality if study else None,
+            "description": study.description if study else None,
             "report_status": report.status if report else "draft",
             "updated_at": item.updated_at.isoformat(),
         }

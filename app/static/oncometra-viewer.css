@@ -1,0 +1,15 @@
+body.embedded-viewer{--mint:#71afff;--mint-dark:#152f51;--surface:#14181e;--surface2:#202833;--font:'Instrument Sans','Helvetica Neue',sans-serif;height:100dvh;background:#0b0e12;font-family:var(--font)}
+.embedded-viewer button.active{border-color:#4a75a8;color:#b9d6ff}
+.embedded-viewer .tool-rail button.active{background:#152f51;color:#b9d6ff}
+.embedded-viewer .viewer-toolbar button,.embedded-viewer .inline-control,.embedded-viewer .inline-control select,.embedded-viewer .nodule-picker,.embedded-viewer .nodule-picker select{font-size:12px}
+.embedded-viewer>.topbar,.embedded-viewer>.tabs{display:none}
+.embedded-viewer .annotation-page{height:100dvh}
+.embedded-viewer .viewer-toolbar{background:#14181e;border-bottom:1px solid #29303b;min-height:48px}
+.embedded-viewer .workflow-bar{background:#14181e;border-color:#29303b}
+.embedded-viewer .inspector{background:#14181e;width:260px}
+.embedded-viewer .annotation-layout{grid-template-columns:58px minmax(0,1fr) 260px}
+.embedded-viewer .primary{background:#0a5ad4;border-color:#2a86ff;color:#fff}
+.embedded-viewer .scope-note,.embedded-viewer .test-identity{display:none}
+.embedded-viewer #study-subtitle{font-size:12px}
+.embedded-viewer .viewer-footer{font-size:12px}
+@media(max-width:1100px){.embedded-viewer .annotation-layout{grid-template-columns:52px minmax(0,1fr)}.embedded-viewer .inspector{display:none}.embedded-viewer .workflow-steps{display:none}}

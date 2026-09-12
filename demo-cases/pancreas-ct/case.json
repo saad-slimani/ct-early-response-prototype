@@ -1,0 +1,22 @@
+{
+  "project_id": "pancreas-ct",
+  "patient_id": "pancreas_001",
+  "modality": "CT",
+  "sequence": null,
+  "source": "Medical Segmentation Decathlon",
+  "source_url": "https://medicaldecathlon.com/",
+  "archive_url": "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task07_Pancreas.tar",
+  "image_member": "Task07_Pancreas/imagesTr/pancreas_001.nii.gz",
+  "mask_member": "Task07_Pancreas/labelsTr/pancreas_001.nii.gz",
+  "source_image_sha256": "104024672d8ae993905621573425073f76a1fd58d1b67a902e98e849e358f057",
+  "source_mask_sha256": "c23328f95bc048c3d49c31b8b52edd232a741781c8a56763c94674595736e67d",
+  "license": "CC BY-SA 4.0",
+  "citation": "Simpson et al., A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv:1902.09063.",
+  "derived": true,
+  "downsample_factor": 2,
+  "tumor_label": 2,
+  "note": "Derived public demonstration volume. Nonempty source tumor label and geometry checked; not independent clinical validation.",
+  "reference_voxels": 3206,
+  "image.nii.gz_sha256": "e564c2eb88b704a785ed14c0625e8ac0016861dab80611cb8c4d02316479fa50",
+  "reference.nii.gz_sha256": "a96451ee65aa4ba0e558d7670249f2d910c1edc83e3fe101fe3f058bb898cbda"
+}

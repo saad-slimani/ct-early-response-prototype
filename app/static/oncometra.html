@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Oncometra | Annotation workspace</title>
+  <link rel="stylesheet" href="/assets/oncometra.css">
+  <script type="module" src="/assets/oncometra.js"></script>
+</head>
+<body>
+  <section id="login-screen" class="login-screen" hidden>
+    <form id="login-form" class="login-card">
+      <div class="wordmark"><span class="brand-symbol">O</span> ONCOMETRA</div>
+      <div class="login-heading"><span class="eyebrow">ANNOTATION WORKSPACE</span><h1>Sign in</h1><p>CT and MRI tumor annotation</p></div>
+      <label>Username<input name="username" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">Sign in</button><p id="login-error" class="error" role="alert"></p>
+      <div class="login-note">Private demonstration. Public, de-identified images only.</div>
+    </form>
+  </section>
+  <div id="workspace" class="workspace" hidden>
+    <header class="app-header"><a class="wordmark" href="/" aria-label="Oncometra home"><span class="brand-symbol">O</span> ONCOMETRA</a><span class="header-divider"></span><span class="header-caption">Annotation workspace</span><span class="demo-tag">DEMO</span><div class="header-user"><span class="avatar">SS</span><div><strong id="user-name"></strong><small id="user-role"></small></div><button id="logout" class="quiet">Sign out</button></div></header>
+    <nav id="navigation" class="app-nav" aria-label="Workspace sections">
+      <button data-tab="projects" class="selected">Projects</button><button data-tab="worklist">Worklist <span id="work-count" class="nav-count">0</span></button><button data-tab="review" data-review>Review</button><button data-tab="radiomics">Radiomics</button><button data-tab="models">Models</button><button data-tab="admin" data-admin>Administration</button><button id="annotation-tab" data-tab="annotation" hidden>Annotation <span id="annotation-name"></span></button>
+      <span class="nav-spacer"></span><span id="storage-status" class="storage-status">Checking storage</span>
+    </nav>
+    <main id="content" class="content"></main>
+    <section id="annotation-page" class="annotation-page" hidden><div class="annotation-context"><button id="back-worklist" class="quiet">Back to worklist</button><span id="assignment-context"></span><span class="nav-spacer"></span><button id="reference-load">Load reference for practice</button><button id="refresh-assignment">Refresh assignment</button></div><iframe id="viewer" title="CT and MRI annotation viewer"></iframe></section>
+    <footer id="app-footer"><span>Public-data demonstration. Not for clinical decisions.</span><span id="data-notice">Changes on free hosting may be lost after a restart. Export completed work.</span></footer>
+  </div>
+  <dialog id="modal"><div class="modal-heading"><h2 id="modal-title"></h2><button id="modal-close" class="quiet" aria-label="Close dialog">Close</button></div><div id="modal-body"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
